@@ -1,6 +1,6 @@
 import useSWR from 'swr'
 import { useState } from 'react'
-import { Copy, Check } from 'lucide-react'
+import { Copy, Check, ExternalLink } from 'lucide-react'
 import PrivateKeyModal from './PrivateKeyModal'
 import DeleteConfirmModal from './DeleteConfirmModal'
 
@@ -115,6 +115,15 @@ export default function WalletList() {
                       <Copy className="w-4 h-4" />
                     )}
                   </button>
+                  <a
+                    href={`https://basescan.org/address/${wallet.address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1 text-gray-400 hover:text-gray-600 rounded flex-shrink-0"
+                    title="View on BaseScan"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
                 </div>
               </div>
               
