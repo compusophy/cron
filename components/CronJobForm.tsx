@@ -34,12 +34,16 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose }: CronJobFo
   const wallets = walletsData?.wallets || []
 
   const [formData, setFormData] = useState({
-    name: 'Send ETH to myself every minute',
+    name: '',
     schedule: '* * * * *',
+    type: 'eth_transfer' as 'eth_transfer' | 'swap',
     toAddress: '',
-    amount: '0.001',
+    amount: '0.0000001',
     chain: 'base',
     walletId: '',
+    fromToken: 'ETH' as 'ETH' | 'USDC',
+    toToken: 'USDC' as 'ETH' | 'USDC',
+    swapAmount: '0.0000001',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -64,14 +68,18 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose }: CronJobFo
         throw new Error(data.error || 'Failed to create cron job')
       }
 
-      setFormData({
-        name: 'Send ETH to myself every minute',
-        schedule: '* * * * *',
-        toAddress: '',
-        amount: '0.001',
-        chain: 'base',
-        walletId: '',
-      })
+          setFormData({
+            name: '',
+            schedule: '* * * * *',
+            type: 'eth_transfer',
+            toAddress: '',
+            amount: '0.0000001',
+            chain: 'base',
+            walletId: '',
+            fromToken: 'ETH',
+            toToken: 'USDC',
+            swapAmount: '0.0000001',
+          })
       onJobCreated()
       onClose()
     } catch (err: any) {
@@ -122,6 +130,22 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose }: CronJobFo
       </div>
 
       <div className="flex flex-col gap-2">
+        <label htmlFor="type" className="text-sm font-medium">
+          Job Type
+        </label>
+        <select
+          id="type"
+          value={formData.type}
+          onChange={(e) => setFormData({ ...formData, type: e.target.value as 'eth_transfer' | 'swap' })}
+          className="px-3 py-2 border border-gray-300 rounded-md"
+          required
+        >
+          <option value="eth_transfer">ETH Transfer</option>
+          <option value="swap">Swap (ETH ↔ USDC)</option>
+        </select>
+      </div>
+
+      <div className="flex flex-col gap-2">
         <label htmlFor="schedule" className="text-sm font-medium">
           Cron Schedule <span className="text-gray-500">(* * * * *)</span>
         </label>
@@ -165,36 +189,104 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose }: CronJobFo
         )}
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="toAddress" className="text-sm font-medium">
-          Recipient Address
-        </label>
-        <input
-          id="toAddress"
-          type="text"
-          value={formData.toAddress}
-          onChange={(e) => setFormData({ ...formData, toAddress: e.target.value })}
-          className="px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
-          placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
-          required
-        />
-      </div>
+      {formData.type === 'eth_transfer' ? (
+        <>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="toAddress" className="text-sm font-medium">
+              Recipient Address
+            </label>
+            <input
+              id="toAddress"
+              type="text"
+              value={formData.toAddress}
+              onChange={(e) => setFormData({ ...formData, toAddress: e.target.value })}
+              className="px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
+              placeholder="0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
+              required={formData.type === 'eth_transfer'}
+            />
+          </div>
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="amount" className="text-sm font-medium">
-          Amount (ETH)
-        </label>
-        <input
-          id="amount"
-          type="number"
-          step="0.000001"
-          value={formData.amount}
-          onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-          className="px-3 py-2 border border-gray-300 rounded-md"
-          placeholder="0.001"
-          required
-        />
-      </div>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="amount" className="text-sm font-medium">
+              Amount (ETH)
+            </label>
+                <input
+                  id="amount"
+                  type="number"
+                  step="0.000001"
+                  value={formData.amount}
+                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                  className="px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="0.0000001"
+                  required={formData.type === 'eth_transfer'}
+                />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="fromToken" className="text-sm font-medium">
+              From Token
+            </label>
+            <select
+              id="fromToken"
+              value={formData.fromToken}
+              onChange={(e) => {
+                const newFromToken = e.target.value as 'ETH' | 'USDC'
+                setFormData({ 
+                  ...formData, 
+                  fromToken: newFromToken,
+                  toToken: newFromToken === 'ETH' ? 'USDC' : 'ETH'
+                })
+              }}
+              className="px-3 py-2 border border-gray-300 rounded-md"
+              required={formData.type === 'swap'}
+            >
+              <option value="ETH">ETH</option>
+              <option value="USDC">USDC</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="toToken" className="text-sm font-medium">
+              To Token
+            </label>
+            <select
+              id="toToken"
+              value={formData.toToken}
+              onChange={(e) => {
+                const newToToken = e.target.value as 'ETH' | 'USDC'
+                setFormData({ 
+                  ...formData, 
+                  toToken: newToToken,
+                  fromToken: newToToken === 'ETH' ? 'USDC' : 'ETH'
+                })
+              }}
+              className="px-3 py-2 border border-gray-300 rounded-md"
+              required={formData.type === 'swap'}
+            >
+              <option value="ETH">ETH</option>
+              <option value="USDC">USDC</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="swapAmount" className="text-sm font-medium">
+              Amount ({formData.fromToken})
+            </label>
+                <input
+                  id="swapAmount"
+                  type="number"
+                  step="0.000001"
+                  value={formData.swapAmount}
+                  onChange={(e) => setFormData({ ...formData, swapAmount: e.target.value })}
+                  className="px-3 py-2 border border-gray-300 rounded-md"
+                  placeholder="0.0000001"
+                  required={formData.type === 'swap'}
+                />
+          </div>
+        </>
+      )}
 
       <div className="flex flex-col gap-2">
         <label htmlFor="chain" className="text-sm font-medium">

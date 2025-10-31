@@ -62,8 +62,8 @@ export default async function handler(
             
             const txHash = await sendEth(
               jobConfig.privateKey,
-              jobConfig.toAddress,
-              jobConfig.amount,
+              jobConfig.toAddress!,
+              jobConfig.amount!,
               rpcUrl
             )
 
@@ -74,8 +74,8 @@ export default async function handler(
               status: 'success',
               txHash,
               from: jobConfig.address,
-              to: jobConfig.toAddress,
-              amount: jobConfig.amount,
+              to: jobConfig.toAddress!,
+              amount: jobConfig.amount!,
               executedAt: Date.now(),
             }
           } catch (error: any) {

@@ -5,6 +5,7 @@ import { kv } from '@vercel/kv'
 import { CronJobConfig } from './create'
 import { shouldRunJob } from '@/lib/cron-scheduler'
 import { sendEth } from '@/lib/eth'
+import { swapTokens } from '@/lib/swap'
 import { randomBytes } from 'crypto'
 
 export default async function handler(
@@ -74,27 +75,27 @@ export default async function handler(
             console.log(`[Cron Runner] Executing job ${jobId}: ${jobConfig.name}`)
             console.log(`[Cron Runner] Chain: ${chainName}, From: ${jobConfig.address}, To: ${jobConfig.toAddress}, Amount: ${jobConfig.amount}`)
             
-            const txHash = await sendEth(
-              jobConfig.privateKey,
-              jobConfig.toAddress,
-              jobConfig.amount,
-              chainName,
-              rpcUrl
-            )
+                const txHash = await sendEth(
+                  jobConfig.privateKey,
+                  jobConfig.toAddress!,
+                  jobConfig.amount!,
+                  chainName,
+                  rpcUrl
+                )
             
             console.log(`[Cron Runner] Success! TX Hash: ${txHash}`)
 
-            result = {
-              jobId,
-              jobName: jobConfig.name,
-              type: 'eth_transfer',
-              status: 'success',
-              txHash,
-              from: jobConfig.address,
-              to: jobConfig.toAddress,
-              amount: jobConfig.amount,
-              executedAt: Date.now(),
-            }
+                result = {
+                  jobId,
+                  jobName: jobConfig.name,
+                  type: 'eth_transfer',
+                  status: 'success',
+                  txHash,
+                  from: jobConfig.address,
+                  to: jobConfig.toAddress!,
+                  amount: jobConfig.amount!,
+                  executedAt: Date.now(),
+                }
 
             // Reset failure count on success
             jobConfig.consecutiveFailures = 0
@@ -108,8 +109,8 @@ export default async function handler(
               txHash,
               executedAt: Date.now(),
               from: jobConfig.address,
-              to: jobConfig.toAddress,
-              amount: jobConfig.amount,
+              to: jobConfig.toAddress!,
+              amount: jobConfig.amount!,
             }
             await kv.set(`cron:log:${logId}`, logEntry)
             await kv.lpush(`cron:job:${jobId}:logs`, logId)
@@ -133,6 +134,102 @@ export default async function handler(
               jobId,
               jobName: jobConfig.name,
               type: 'eth_transfer',
+              status: 'error',
+              error: error.message,
+              executedAt: Date.now(),
+              autoPaused: failureCount >= MAX_FAILURES,
+            }
+
+            // Store error log entry
+            const logId = `log_${randomBytes(16).toString('hex')}`
+            const logEntry = {
+              id: logId,
+              jobId,
+              status: 'error' as const,
+              error: error.message,
+              executedAt: Date.now(),
+              autoPaused: failureCount >= MAX_FAILURES,
+            }
+            await kv.set(`cron:log:${logId}`, logEntry)
+            await kv.lpush(`cron:job:${jobId}:logs`, logId)
+            // Keep only last 100 logs per job
+            await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
+          }
+        } else if (jobConfig.type === 'swap') {
+          try {
+            // Get RPC URL from environment or use default
+            const rpcUrl = process.env.ETH_RPC_URL
+            const chainName = jobConfig.chain || 'base'
+            
+            console.log(`[Cron Runner] Executing swap job ${jobId}: ${jobConfig.name}`)
+            console.log(`[Cron Runner] Chain: ${chainName}, From: ${jobConfig.address}, Swap: ${jobConfig.swapAmount} ${jobConfig.fromToken} -> ${jobConfig.toToken}`)
+            
+            if (!jobConfig.fromToken || !jobConfig.toToken || !jobConfig.swapAmount) {
+              throw new Error('Missing swap configuration: fromToken, toToken, or swapAmount')
+            }
+            
+            const txHash = await swapTokens(
+              jobConfig.privateKey,
+              jobConfig.fromToken,
+              jobConfig.toToken,
+              jobConfig.swapAmount,
+              chainName,
+              rpcUrl
+            )
+            
+            console.log(`[Cron Runner] Swap success! TX Hash: ${txHash}`)
+
+            result = {
+              jobId,
+              jobName: jobConfig.name,
+              type: 'swap',
+              status: 'success',
+              txHash,
+              from: jobConfig.address,
+              fromToken: jobConfig.fromToken,
+              toToken: jobConfig.toToken,
+              amount: jobConfig.swapAmount,
+              executedAt: Date.now(),
+            }
+
+            // Reset failure count on success
+            jobConfig.consecutiveFailures = 0
+
+            // Store log entry
+            const logId = `log_${randomBytes(16).toString('hex')}`
+            const logEntry = {
+              id: logId,
+              jobId,
+              status: 'success' as const,
+              txHash,
+              executedAt: Date.now(),
+              from: jobConfig.address,
+              fromToken: jobConfig.fromToken,
+              toToken: jobConfig.toToken,
+              amount: jobConfig.swapAmount,
+            }
+            await kv.set(`cron:log:${logId}`, logEntry)
+            await kv.lpush(`cron:job:${jobId}:logs`, logId)
+            // Keep only last 100 logs per job
+            await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
+          } catch (error: any) {
+            console.error(`[Cron Runner] Error executing swap job ${jobId}:`, error)
+            
+            // Increment failure count
+            const failureCount = (jobConfig.consecutiveFailures || 0) + 1
+            jobConfig.consecutiveFailures = failureCount
+            
+            // Auto-pause after 3 consecutive failures
+            const MAX_FAILURES = 3
+            if (failureCount >= MAX_FAILURES) {
+              jobConfig.enabled = false
+              console.log(`[Cron Runner] Auto-pausing job ${jobId} after ${failureCount} consecutive failures`)
+            }
+
+            result = {
+              jobId,
+              jobName: jobConfig.name,
+              type: 'swap',
               status: 'error',
               error: error.message,
               executedAt: Date.now(),

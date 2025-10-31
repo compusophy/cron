@@ -11,6 +11,8 @@ interface LogEntry {
   from?: string
   to?: string
   amount?: string
+  fromToken?: 'ETH' | 'USDC'
+  toToken?: 'ETH' | 'USDC'
 }
 
 interface CronJobLogsModalProps {
@@ -114,7 +116,12 @@ export default function CronJobLogsModal({ isOpen, onClose, jobId, jobName }: Cr
                           <span className="font-mono text-xs">{log.to}</span>
                         </div>
                       )}
-                      {log.amount && (
+                      {log.fromToken && log.toToken && log.amount ? (
+                        <div>
+                          <span className="text-gray-500">Swap:</span>{' '}
+                          <span className="font-semibold">{log.amount} {log.fromToken} → {log.toToken}</span>
+                        </div>
+                      ) : log.amount && (
                         <div>
                           <span className="text-gray-500">Amount:</span>{' '}
                           <span className="font-semibold">{log.amount} ETH</span>

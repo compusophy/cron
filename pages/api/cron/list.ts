@@ -25,19 +25,29 @@ export default async function handler(
         if (!jobConfig) return null
         
         // Return safe version without private key
-        return {
+        const job: any = {
           id: jobConfig.id,
           name: jobConfig.name,
           schedule: jobConfig.schedule,
           type: jobConfig.type,
-          toAddress: jobConfig.toAddress,
-          amount: jobConfig.amount,
           chain: jobConfig.chain,
           address: jobConfig.address, // From address
           createdAt: jobConfig.createdAt,
           lastRunTime: jobConfig.lastRunTime,
           enabled: jobConfig.enabled,
         }
+        
+        // Add type-specific fields
+        if (jobConfig.type === 'eth_transfer') {
+          job.toAddress = jobConfig.toAddress
+          job.amount = jobConfig.amount
+        } else if (jobConfig.type === 'swap') {
+          job.fromToken = jobConfig.fromToken
+          job.toToken = jobConfig.toToken
+          job.swapAmount = jobConfig.swapAmount
+        }
+        
+        return job
       })
     )
 

@@ -7,9 +7,14 @@ export interface CronJobConfig {
   id: string
   name: string
   schedule: string // Cron format: * * * * *
-  type: 'eth_transfer'
-  toAddress: string
-  amount: string // Amount in ETH
+  type: 'eth_transfer' | 'swap'
+  // For eth_transfer
+  toAddress?: string
+  amount?: string // Amount in ETH
+  // For swap
+  fromToken?: 'ETH' | 'USDC'
+  toToken?: 'ETH' | 'USDC'
+  swapAmount?: string // Amount to swap
   chain: string // Chain name: 'base', 'sepolia', 'mainnet'
   privateKey: string
   publicKey: string
@@ -29,13 +34,50 @@ export default async function handler(
   }
 
   try {
-    const { name, schedule, toAddress, amount, chain, walletId } = req.body
+    const { name, schedule, type, toAddress, amount, chain, walletId, fromToken, toToken, swapAmount } = req.body
 
-    // Validate inputs
-    if (!name || !schedule || !toAddress || !amount || !chain || !walletId) {
+    // Validate type
+    if (!type || (type !== 'eth_transfer' && type !== 'swap')) {
       return res.status(400).json({ 
-        error: 'Missing required fields: name, schedule, toAddress, amount, chain, walletId' 
+        error: 'Invalid type. Must be "eth_transfer" or "swap"' 
       })
+    }
+
+    // Validate common fields
+    if (!name || !schedule || !chain || !walletId) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: name, schedule, chain, walletId' 
+      })
+    }
+
+    // Validate type-specific fields
+    if (type === 'eth_transfer') {
+      if (!toAddress || !amount) {
+        return res.status(400).json({ 
+          error: 'Missing required fields for eth_transfer: toAddress, amount' 
+        })
+      }
+    } else if (type === 'swap') {
+      if (!fromToken || !toToken || !swapAmount) {
+        return res.status(400).json({ 
+          error: 'Missing required fields for swap: fromToken, toToken, swapAmount' 
+        })
+      }
+      if (fromToken === toToken) {
+        return res.status(400).json({ 
+          error: 'fromToken and toToken must be different' 
+        })
+      }
+      if (fromToken !== 'ETH' && fromToken !== 'USDC') {
+        return res.status(400).json({ 
+          error: 'fromToken must be ETH or USDC' 
+        })
+      }
+      if (toToken !== 'ETH' && toToken !== 'USDC') {
+        return res.status(400).json({ 
+          error: 'toToken must be ETH or USDC' 
+        })
+      }
     }
 
     // Validate chain
@@ -55,7 +97,8 @@ export default async function handler(
     }
 
     // Validate amount is a number
-    const amountNum = parseFloat(amount)
+    const amountToValidate = type === 'swap' ? swapAmount : amount
+    const amountNum = parseFloat(amountToValidate)
     if (isNaN(amountNum) || amountNum <= 0) {
       return res.status(400).json({ 
         error: 'Amount must be a positive number' 
@@ -76,9 +119,7 @@ export default async function handler(
       id: jobId,
       name,
       schedule,
-      type: 'eth_transfer',
-      toAddress,
-      amount: amount.toString(),
+      type: type as 'eth_transfer' | 'swap',
       chain,
       privateKey: wallet.privateKey,
       publicKey: wallet.publicKey || '',
@@ -89,6 +130,16 @@ export default async function handler(
       consecutiveFailures: 0,
     }
 
+    // Add type-specific fields
+    if (type === 'eth_transfer') {
+      jobConfig.toAddress = toAddress
+      jobConfig.amount = amount.toString()
+    } else if (type === 'swap') {
+      jobConfig.fromToken = fromToken as 'ETH' | 'USDC'
+      jobConfig.toToken = toToken as 'ETH' | 'USDC'
+      jobConfig.swapAmount = swapAmount.toString()
+    }
+
     // Store in Redis
     // Store the job config
     await kv.set(`cron:job:${jobId}`, jobConfig)
@@ -96,17 +147,27 @@ export default async function handler(
     // Add to list of active job IDs
     await kv.sadd('cron:jobs:active', jobId)
 
+    const responseJob: any = {
+      id: jobConfig.id,
+      name: jobConfig.name,
+      schedule: jobConfig.schedule,
+      type: jobConfig.type,
+      address: jobConfig.address,
+      createdAt: jobConfig.createdAt,
+    }
+
+    if (type === 'eth_transfer') {
+      responseJob.toAddress = jobConfig.toAddress
+      responseJob.amount = jobConfig.amount
+    } else if (type === 'swap') {
+      responseJob.fromToken = jobConfig.fromToken
+      responseJob.toToken = jobConfig.toToken
+      responseJob.swapAmount = jobConfig.swapAmount
+    }
+
     return res.status(201).json({
       success: true,
-      job: {
-        id: jobConfig.id,
-        name: jobConfig.name,
-        schedule: jobConfig.schedule,
-        toAddress: jobConfig.toAddress,
-        amount: jobConfig.amount,
-        address: jobConfig.address, // From address (the generated wallet)
-        createdAt: jobConfig.createdAt,
-      },
+      job: responseJob,
     })
   } catch (error: any) {
     console.error('Error creating cron job:', error)

@@ -60,12 +60,13 @@ export async function sendEth(
   
   // Create transport
   let transport
-  if (finalRpcUrl) {
-    transport = http(finalRpcUrl)
-  } else if (chainName === 'base' && process.env.BASE_RPC_URL) {
+  // Priority: BASE_RPC_URL for Base chain, then ETH_RPC_URL from env/param, then Infura, then public
+  if (chainName === 'base' && process.env.BASE_RPC_URL) {
     // Use custom Base RPC if provided
-    console.log(`[sendEth] Using custom Base RPC from env`)
+    console.log(`[sendEth] Using custom Base RPC from env: ${process.env.BASE_RPC_URL}`)
     transport = http(process.env.BASE_RPC_URL)
+  } else if (finalRpcUrl) {
+    transport = http(finalRpcUrl)
   } else if (process.env.INFURA_API_KEY) {
     // Infura doesn't support Base, use public RPC for Base
     if (chainName === 'base') {

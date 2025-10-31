@@ -9,13 +9,16 @@ interface CronJob {
   name: string
   schedule: string
   type: string
-  toAddress: string
-  amount: string
+  toAddress?: string
+  amount?: string
   chain: string
   address: string
   createdAt: number
   lastRunTime: number | null
   enabled: boolean
+  fromToken?: 'ETH' | 'USDC'
+  toToken?: 'ETH' | 'USDC'
+  swapAmount?: string
 }
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
@@ -216,24 +219,41 @@ export default function CronJobList() {
               </div>
             </div>
 
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-gray-500 text-xs">From:</span>
-              <p className="font-mono text-xs mt-1 break-all">{job.address}</p>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs">To:</span>
-              <p className="font-mono text-xs mt-1 break-all">{job.toAddress}</p>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs">Amount:</span>
-              <p className="font-semibold text-sm mt-1">{job.amount} ETH</p>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs">Chain:</span>
-              <p className="text-sm mt-1 capitalize">{job.chain}</p>
-            </div>
-          </div>
+              {job.type === 'eth_transfer' ? (
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-500 text-xs">From:</span>
+                    <p className="font-mono text-xs mt-1 break-all">{job.address}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">To:</span>
+                    <p className="font-mono text-xs mt-1 break-all">{job.toAddress}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">Amount:</span>
+                    <p className="font-semibold text-sm mt-1">{job.amount} ETH</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">Chain:</span>
+                    <p className="text-sm mt-1 capitalize">{job.chain}</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-500 text-xs">From:</span>
+                    <p className="font-mono text-xs mt-1 break-all">{job.address}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">Swap:</span>
+                    <p className="font-semibold text-sm mt-1">{job.swapAmount} {job.fromToken} → {job.toToken}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">Chain:</span>
+                    <p className="text-sm mt-1 capitalize">{job.chain}</p>
+                  </div>
+                </div>
+              )}
         </div>
       ))}
       </div>
