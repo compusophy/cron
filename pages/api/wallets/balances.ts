@@ -1,12 +1,24 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { createPublicClient, http, formatEther, formatUnits } from 'viem'
 import { base } from 'viem/chains'
+import { kv } from '@vercel/kv'
+import { getTokenMetadata } from '@/lib/token-metadata'
 
 const BASE_TOKENS = {
   WETH: '0x4200000000000000000000000000000000000006' as `0x${string}`,
   USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`,
   TEST: (process.env.DEFAULT_TOKEN_ADDRESS || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07') as `0x${string}`,
 }
+
+const ERC20_BALANCE_ABI = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,7 +28,7 @@ export default async function handler(
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const { address } = req.query
+  const { address, walletId } = req.query
 
   if (!address || typeof address !== 'string') {
     return res.status(400).json({ error: 'Address parameter required' })
@@ -37,52 +49,112 @@ export default async function handler(
       address: address as `0x${string}`,
     })
 
-    // Get WETH balance
-    const wethBalance = await publicClient.readContract({
-      address: BASE_TOKENS.WETH,
-      abi: [{
-        name: 'balanceOf',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: 'account', type: 'address' }],
-        outputs: [{ name: '', type: 'uint256' }],
-      }],
-      functionName: 'balanceOf',
-      args: [address as `0x${string}`],
-    }) as bigint
+    // Standard tokens (always fetch)
+    const standardTokens = [
+      { address: BASE_TOKENS.WETH, decimals: 18, symbol: 'WETH' },
+      { address: BASE_TOKENS.USDC, decimals: 6, symbol: 'USDC' },
+      { address: BASE_TOKENS.TEST, decimals: 18, symbol: 'TestCoin' },
+    ]
 
-    // Get USDC balance
-    const usdcBalance = await publicClient.readContract({
-      address: BASE_TOKENS.USDC,
-      abi: [{
-        name: 'balanceOf',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: 'account', type: 'address' }],
-        outputs: [{ name: '', type: 'uint256' }],
-      }],
-      functionName: 'balanceOf',
-      args: [address as `0x${string}`],
-    }) as bigint
+    const standardBalances: Record<string, string> = {}
+    
+    // Fetch standard token balances in parallel
+    const standardBalancePromises = standardTokens.map(async (token) => {
+      try {
+        const balance = await publicClient.readContract({
+          address: token.address,
+          abi: ERC20_BALANCE_ABI,
+          functionName: 'balanceOf',
+          args: [address as `0x${string}`],
+        }) as bigint
+        
+        return {
+          symbol: token.symbol.toLowerCase(),
+          balance: formatUnits(balance, token.decimals),
+        }
+      } catch (error) {
+        console.error(`Error fetching ${token.symbol} balance:`, error)
+        return { symbol: token.symbol.toLowerCase(), balance: '0' }
+      }
+    })
 
-    const testCoinBalance = await publicClient.readContract({
-      address: BASE_TOKENS.TEST,
-      abi: [{
-        name: 'balanceOf',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: 'account', type: 'address' }],
-        outputs: [{ name: '', type: 'uint256' }],
-      }],
-      functionName: 'balanceOf',
-      args: [address as `0x${string}`],
-    }) as bigint
+    const standardResults = await Promise.all(standardBalancePromises)
+    standardResults.forEach(({ symbol, balance }) => {
+      standardBalances[symbol] = balance
+    })
+
+    // Dynamic tokens (from wallet tracking)
+    const dynamicBalances: Array<{ address: string; symbol: string; name: string; balance: string; decimals: number }> = []
+    
+    if (walletId && typeof walletId === 'string') {
+      try {
+        // Get tracked tokens for this wallet
+        const tokenKey = `wallet:${walletId}:tokens`
+        const trackedTokens = await kv.smembers(tokenKey) as string[]
+
+        if (trackedTokens && trackedTokens.length > 0) {
+          // Fetch balances and metadata for tracked tokens
+          const dynamicPromises = trackedTokens.map(async (tokenAddress) => {
+            try {
+              // Skip if it's a standard token we already fetched
+              const lowerTokenAddress = tokenAddress.toLowerCase()
+              if (
+                lowerTokenAddress === BASE_TOKENS.WETH.toLowerCase() ||
+                lowerTokenAddress === BASE_TOKENS.USDC.toLowerCase() ||
+                lowerTokenAddress === BASE_TOKENS.TEST.toLowerCase()
+              ) {
+                return null
+              }
+
+              // Get token metadata
+              const metadata = await getTokenMetadata(tokenAddress, process.env.BASE_RPC_URL)
+              if (!metadata) {
+                return null
+              }
+
+              // Get balance
+              const balance = await publicClient.readContract({
+                address: tokenAddress.toLowerCase() as `0x${string}`,
+                abi: ERC20_BALANCE_ABI,
+                functionName: 'balanceOf',
+                args: [address as `0x${string}`],
+              }) as bigint
+
+              const formattedBalance = formatUnits(balance, metadata.decimals)
+              
+              // Only include if balance > 0
+              if (parseFloat(formattedBalance) > 0) {
+                return {
+                  address: tokenAddress.toLowerCase(),
+                  symbol: metadata.symbol,
+                  name: metadata.name,
+                  balance: formattedBalance,
+                  decimals: metadata.decimals,
+                }
+              }
+              return null
+            } catch (error) {
+              console.error(`Error fetching balance for token ${tokenAddress}:`, error)
+              return null
+            }
+          })
+
+          const dynamicResults = await Promise.all(dynamicPromises)
+          dynamicBalances.push(...dynamicResults.filter((r): r is NonNullable<typeof r> => r !== null))
+        }
+      } catch (error) {
+        console.error('Error fetching tracked tokens:', error)
+        // Continue without dynamic tokens
+      }
+    }
 
     const balances = {
       eth: formatEther(ethBalance),
-      weth: formatEther(wethBalance),
-      usdc: formatUnits(usdcBalance, 6), // USDC has 6 decimals
-      testCoin: formatUnits(testCoinBalance, 18),
+      weth: standardBalances.weth || '0',
+      usdc: standardBalances.usdc || '0',
+      testCoin: standardBalances.testcoin || standardBalances.test || '0',
+      // Dynamic tokens
+      tokens: dynamicBalances,
     }
 
     return res.status(200).json({ balances })

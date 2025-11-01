@@ -20,11 +20,6 @@ export default function DrainWalletModal({ isOpen, onClose, wallet, onSuccess }:
 
   if (!isOpen) return null
 
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && !loading) {
-      onClose()
-    }
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -71,7 +66,6 @@ export default function DrainWalletModal({ isOpen, onClose, wallet, onSuccess }:
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 p-4"
-      onClick={handleBackdropClick}
     >
       <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-gray-200 p-4">
@@ -93,7 +87,7 @@ export default function DrainWalletModal({ isOpen, onClose, wallet, onSuccess }:
 
         <form onSubmit={handleSubmit} className="space-y-4 p-4">
           <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            Sends every supported asset (ETH, WETH, USDC, TestCoin) to the recipient address. Use with caution.
+            Sends all assets (ETH and all tokens) from this wallet to the recipient address. Use with caution.
           </div>
 
           <div className="flex flex-col gap-2">

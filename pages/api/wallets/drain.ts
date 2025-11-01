@@ -6,6 +6,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { base, mainnet, sepolia } from 'viem/chains'
 import { recordWalletLog } from '@/lib/wallet-logs'
 import { withNonceLock } from '@/lib/nonce-lock'
+import { getTokenMetadata } from '@/lib/token-metadata'
 
 const ERC20_ABI = [
   {
@@ -27,7 +28,8 @@ const ERC20_ABI = [
   },
 ] as const
 
-const TOKEN_CONFIG = [
+// Standard tokens that we always check
+const STANDARD_TOKENS = [
   { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`, decimals: 6, symbol: 'USDC' },
   { address: '0x4200000000000000000000000000000000000006' as `0x${string}`, decimals: 18, symbol: 'WETH' },
   {
@@ -123,8 +125,53 @@ export default async function handler(
     const tokenResults: Array<{ symbol: string; address: `0x${string}`; amount: string; txHash?: string; error?: string }> = []
     let ethResult: { amount: string; txHash?: string } | null = null
 
+    // Get all tokens to drain (standard + tracked)
+    const tokensToDrain: Array<{ address: `0x${string}`; decimals: number; symbol: string }> = [...STANDARD_TOKENS]
+
+    // Get tracked tokens for this wallet
+    try {
+      const tokenKey = `wallet:${walletId}:tokens`
+      const trackedTokens = await kv.smembers(tokenKey) as string[]
+
+      if (trackedTokens && trackedTokens.length > 0) {
+        const rpcUrl = resolveRpcUrl(chain)
+        
+        // Fetch metadata for tracked tokens
+        for (const tokenAddress of trackedTokens) {
+          const lowerAddress = tokenAddress.toLowerCase()
+          
+          // Skip if already in standard tokens
+          if (STANDARD_TOKENS.some(t => t.address.toLowerCase() === lowerAddress)) {
+            continue
+          }
+
+          try {
+            const metadata = await getTokenMetadata(tokenAddress, rpcUrl)
+            if (metadata) {
+              tokensToDrain.push({
+                address: tokenAddress.toLowerCase() as `0x${string}`,
+                decimals: metadata.decimals,
+                symbol: metadata.symbol,
+              })
+            }
+          } catch (error) {
+            console.warn(`Failed to get metadata for token ${tokenAddress}:`, error)
+            // Try with default decimals if metadata fetch fails
+            tokensToDrain.push({
+              address: tokenAddress.toLowerCase() as `0x${string}`,
+              decimals: 18, // Default fallback
+              symbol: 'UNKNOWN',
+            })
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to fetch tracked tokens, draining standard tokens only:', error)
+    }
+
     await withNonceLock(account.address, async () => {
-      for (const token of TOKEN_CONFIG) {
+      // Drain all tokens
+      for (const token of tokensToDrain) {
         try {
           const balance = (await publicClient.readContract({
             address: token.address,

@@ -6,7 +6,7 @@ import { sendEth } from '@/lib/eth'
 import { recordWalletLog } from '@/lib/wallet-logs'
 
 function resolveLogWalletId(jobConfig: CronJobConfig) {
-  return jobConfig.workerWalletId || jobConfig.parentWalletId || null
+  return jobConfig.walletId || null
 }
 
 async function recordWalletActivity(jobConfig: CronJobConfig, type: string, status: 'success' | 'error', payload: { txHash?: string; message?: string; details?: Record<string, any> }) {

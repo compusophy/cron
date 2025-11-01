@@ -5,12 +5,77 @@ import { kv } from '@vercel/kv'
 import { CronJobConfig } from './create'
 import { shouldRunJob } from '@/lib/cron-scheduler'
 import { sendEth } from '@/lib/eth'
-import { swapTokens, swapEthForToken } from '@/lib/swap'
+import { swapTokens, swapEthForToken, swapTokenForEth } from '@/lib/swap'
 import { recordWalletLog } from '@/lib/wallet-logs'
 import { randomBytes } from 'crypto'
+import { createPublicClient, http, parseEther, formatEther, formatUnits, parseUnits, type Address } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
+import { base, sepolia, mainnet } from 'viem/chains'
+import { getTokenMetadata } from '@/lib/token-metadata'
+
+const ERC20_ABI = [
+  {
+    name: 'balanceOf',
+    type: 'function',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const
+
+async function getMaxEthBalance(privateKey: string, chainName: string, rpcUrl?: string): Promise<string> {
+  // Determine chain
+  const chain = chainName === 'base' ? base : chainName === 'mainnet' ? mainnet : sepolia
+  
+  // Get RPC URL
+  const finalRpcUrl = rpcUrl || (chainName === 'base' ? process.env.BASE_RPC_URL : process.env.ETH_RPC_URL)
+  const transport = finalRpcUrl ? http(finalRpcUrl) : http(chainName === 'base' ? 'https://base.publicnode.com' : 'https://rpc.sepolia.org')
+  
+  const account = privateKeyToAccount(privateKey as `0x${string}`)
+  const publicClient = createPublicClient({ chain, transport })
+  
+  const balance = await publicClient.getBalance({ address: account.address })
+  
+  // Reserve ~0.001 ETH for gas (estimate for standard transaction)
+  const gasReserve = parseEther('0.001')
+  const maxAmount = balance > gasReserve ? balance - gasReserve : 0n
+  
+  return formatEther(maxAmount)
+}
+
+async function getMaxTokenBalance(
+  privateKey: string,
+  tokenAddress: string,
+  chainName: string,
+  rpcUrl?: string
+): Promise<string> {
+  // Determine chain
+  const chain = chainName === 'base' ? base : chainName === 'mainnet' ? mainnet : sepolia
+  
+  // Get RPC URL
+  const finalRpcUrl = rpcUrl || (chainName === 'base' ? process.env.BASE_RPC_URL : process.env.ETH_RPC_URL)
+  const transport = finalRpcUrl ? http(finalRpcUrl) : http(chainName === 'base' ? 'https://base.publicnode.com' : 'https://rpc.sepolia.org')
+  
+  const account = privateKeyToAccount(privateKey as `0x${string}`)
+  const publicClient = createPublicClient({ chain, transport })
+  
+  // Get token metadata for decimals
+  const metadata = await getTokenMetadata(tokenAddress, finalRpcUrl)
+  const decimals = metadata?.decimals || 18
+  
+  // Get token balance
+  const balance = await publicClient.readContract({
+    address: tokenAddress.toLowerCase() as Address,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: [account.address],
+  }) as bigint
+  
+  return formatUnits(balance, decimals)
+}
 
 function resolveLogWalletId(jobConfig: CronJobConfig) {
-  return jobConfig.workerWalletId || jobConfig.parentWalletId || null
+  return jobConfig.walletId || null
 }
 
 async function recordWalletActivity(jobConfig: CronJobConfig, type: string, status: 'success' | 'error', payload: { txHash?: string; message?: string; details?: Record<string, any> }) {
@@ -106,16 +171,23 @@ export default async function handler(
             const rpcUrl = process.env.ETH_RPC_URL
             const chainName = jobConfig.chain || 'sepolia'
             
-            console.log(`[Cron Runner] Executing job ${jobId}: ${jobConfig.name}`)
-            console.log(`[Cron Runner] Chain: ${chainName}, From: ${jobConfig.address}, To: ${jobConfig.toAddress}, Amount: ${jobConfig.amount}`)
+            // Calculate amount: use max balance if useMax is true, otherwise use configured amount
+            let amountToSend = jobConfig.amount || '0'
+            if (jobConfig.useMax) {
+              amountToSend = await getMaxEthBalance(jobConfig.privateKey, chainName, rpcUrl)
+              console.log(`[Cron Runner] Using Max: calculated max ETH balance = ${amountToSend}`)
+            }
             
-                const txHash = await sendEth(
-                  jobConfig.privateKey,
-                  jobConfig.toAddress!,
-                  jobConfig.amount!,
-                  chainName,
-                  rpcUrl
-                )
+            console.log(`[Cron Runner] Executing job ${jobId}: ${jobConfig.name}`)
+            console.log(`[Cron Runner] Chain: ${chainName}, From: ${jobConfig.address}, To: ${jobConfig.toAddress}, Amount: ${amountToSend}${jobConfig.useMax ? ' (Max)' : ''}`)
+            
+            const txHash = await sendEth(
+              jobConfig.privateKey,
+              jobConfig.toAddress!,
+              amountToSend,
+              chainName,
+              rpcUrl
+            )
             
             console.log(`[Cron Runner] Success! TX Hash: ${txHash}`)
 
@@ -123,25 +195,28 @@ export default async function handler(
               txHash,
               details: {
                 to: jobConfig.toAddress,
-                amount: jobConfig.amount,
+                amount: amountToSend,
                 chain: jobConfig.chain,
+                useMax: jobConfig.useMax,
               },
             })
 
-                result = {
-                  jobId,
-                  jobName: jobConfig.name,
-                  type: 'eth_transfer',
-                  status: 'success',
-                  txHash,
-                  from: jobConfig.address,
-                  to: jobConfig.toAddress!,
-                  amount: jobConfig.amount!,
-                  executedAt: Date.now(),
-                }
+            result = {
+              jobId,
+              jobName: jobConfig.name,
+              type: 'eth_transfer',
+              status: 'success',
+              txHash,
+              from: jobConfig.address,
+              to: jobConfig.toAddress!,
+              amount: amountToSend,
+              executedAt: Date.now(),
+            }
 
             // Reset failure count on success
             jobConfig.consecutiveFailures = 0
+            jobConfig.lastRunTime = Date.now()
+            await kv.set(`cron:job:${jobId}`, jobConfig)
 
             // Store log entry
             const logId = `log_${randomBytes(16).toString('hex')}`
@@ -181,6 +256,10 @@ export default async function handler(
               jobConfig.enabled = false
               console.log(`[Cron Runner] Auto-pausing job ${jobId} after ${failureCount} consecutive failures`)
             }
+            
+            // Save updated job config to Redis
+            jobConfig.lastRunTime = Date.now()
+            await kv.set(`cron:job:${jobId}`, jobConfig)
 
             result = {
               jobId,
@@ -256,6 +335,8 @@ export default async function handler(
 
             // Reset failure count on success
             jobConfig.consecutiveFailures = 0
+            jobConfig.lastRunTime = Date.now()
+            await kv.set(`cron:job:${jobId}`, jobConfig)
 
             // Store log entry
             const logId = `log_${randomBytes(16).toString('hex')}`
@@ -297,6 +378,10 @@ export default async function handler(
               jobConfig.enabled = false
               console.log(`[Cron Runner] Auto-pausing job ${jobId} after ${failureCount} consecutive failures`)
             }
+            
+            // Save updated job config to Redis
+            jobConfig.lastRunTime = Date.now()
+            await kv.set(`cron:job:${jobId}`, jobConfig)
 
             result = {
               jobId,
@@ -325,23 +410,52 @@ export default async function handler(
           }
         } else if (jobConfig.type === 'token_swap') {
           try {
-            const rpcUrl = process.env.ETH_RPC_URL
             const chainName = jobConfig.chain || 'base'
+            const rpcUrl = chainName === 'base' ? process.env.BASE_RPC_URL : process.env.ETH_RPC_URL
+            const swapDirection = jobConfig.swapDirection || 'eth_to_token'
 
-            console.log(`[Cron Runner] Executing token swap job ${jobId}: ${jobConfig.name}`)
-            console.log(`[Cron Runner] Chain: ${chainName}, From: ${jobConfig.address}, Swap: ${jobConfig.swapAmount} ETH -> ${jobConfig.tokenAddress}`)
-
-            if (!jobConfig.swapAmount || !jobConfig.tokenAddress) {
-              throw new Error('Missing token swap configuration: swapAmount or tokenAddress')
+            if (!jobConfig.tokenAddress) {
+              throw new Error('Missing token swap configuration: tokenAddress')
             }
 
-            const txHash = await swapEthForToken(
-              jobConfig.privateKey,
-              jobConfig.tokenAddress,
-              jobConfig.swapAmount,
-              chainName,
-              rpcUrl
-            )
+            // Calculate amount: use max balance if useMax is true
+            let amountToSwap = jobConfig.swapAmount || '0'
+            if (jobConfig.useMax) {
+              if (swapDirection === 'eth_to_token') {
+                amountToSwap = await getMaxEthBalance(jobConfig.privateKey, chainName, rpcUrl)
+                console.log(`[Cron Runner] Using Max: calculated max ETH balance = ${amountToSwap}`)
+              } else {
+                amountToSwap = await getMaxTokenBalance(jobConfig.privateKey, jobConfig.tokenAddress, chainName, rpcUrl)
+                console.log(`[Cron Runner] Using Max: calculated max token balance = ${amountToSwap}`)
+              }
+            }
+
+            console.log(`[Cron Runner] Executing token swap job ${jobId}: ${jobConfig.name}`)
+            console.log(`[Cron Runner] Chain: ${chainName}, From: ${jobConfig.address}, Swap: ${amountToSwap} ${swapDirection === 'eth_to_token' ? 'ETH' : 'Tokens'} -> ${swapDirection === 'eth_to_token' ? 'Token' : 'ETH'}${jobConfig.useMax ? ' (Max)' : ''}`)
+
+            let txHash: string
+            if (swapDirection === 'eth_to_token') {
+              txHash = await swapEthForToken(
+                jobConfig.privateKey,
+                jobConfig.tokenAddress,
+                amountToSwap,
+                chainName,
+                rpcUrl
+              )
+            } else {
+              // Token to ETH - need token decimals
+              const metadata = await getTokenMetadata(jobConfig.tokenAddress, rpcUrl)
+              const tokenDecimals = metadata?.decimals || 18
+              
+              txHash = await swapTokenForEth(
+                jobConfig.privateKey,
+                jobConfig.tokenAddress,
+                amountToSwap,
+                tokenDecimals,
+                chainName,
+                rpcUrl
+              )
+            }
 
             console.log(`[Cron Runner] Token swap success! TX Hash: ${txHash}`)
 
@@ -349,8 +463,10 @@ export default async function handler(
               txHash,
               details: {
                 tokenAddress: jobConfig.tokenAddress,
-                amount: jobConfig.swapAmount,
+                amount: amountToSwap,
                 chain: jobConfig.chain,
+                swapDirection,
+                useMax: jobConfig.useMax,
               },
             })
 
@@ -362,11 +478,13 @@ export default async function handler(
               txHash,
               from: jobConfig.address,
               tokenAddress: jobConfig.tokenAddress,
-              amount: jobConfig.swapAmount,
+              amount: amountToSwap,
               executedAt: Date.now(),
             }
 
             jobConfig.consecutiveFailures = 0
+            jobConfig.lastRunTime = Date.now()
+            await kv.set(`cron:job:${jobId}`, jobConfig)
 
             const logId = `log_${randomBytes(16).toString('hex')}`
             const logEntry = {
@@ -402,6 +520,10 @@ export default async function handler(
               jobConfig.enabled = false
               console.log(`[Cron Runner] Auto-pausing job ${jobId} after ${failureCount} consecutive failures`)
             }
+            
+            // Save updated job config to Redis
+            jobConfig.lastRunTime = Date.now()
+            await kv.set(`cron:job:${jobId}`, jobConfig)
 
             result = {
               jobId,

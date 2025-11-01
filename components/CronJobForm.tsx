@@ -4,15 +4,24 @@ import { useToast } from './ToastProvider'
 
 interface CronJob {
   id: string
-  name: string
-  schedule: string
+  name?: string
+  schedule?: string
   type: string
-  toAddress: string
-  amount: string
-  address: string
-  createdAt: number
-  lastRunTime: number | null
+  toAddress?: string
+  amount?: string
+  address?: string
+  createdAt?: number
+  lastRunTime?: number | null
   enabled: boolean
+  walletId?: string
+  parentWalletId?: string // Legacy field for backward compatibility
+  fromToken?: 'ETH' | 'USDC'
+  toToken?: 'ETH' | 'USDC'
+  swapAmount?: string
+  tokenAddress?: string
+  chain?: string
+  swapDirection?: 'eth_to_token' | 'token_to_eth'
+  useMax?: boolean
 }
 
 type WalletType = 'master' | 'worker'
@@ -40,53 +49,91 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
   const { data: walletsData } = useSWR<{ wallets: Wallet[] }>('/api/wallets/list', fetcher)
   const { data: jobsData } = useSWR<{ jobs: CronJob[] }>('/api/cron/list', fetcher)
   const wallets = walletsData?.wallets || []
-  const masterWallets = wallets.filter((wallet) => wallet.type !== 'worker')
-  const sortedMasters = [...masterWallets].sort((a, b) => a.createdAt - b.createdAt)
   const jobs = jobsData?.jobs || []
   const { showToast } = useToast()
 
-  // Get default wallet: use provided defaultWalletId, or oldest wallet
-  const defaultMasterWallet = defaultWalletId 
-    ? masterWallets.find(w => w.id === defaultWalletId) || sortedMasters[0]
-    : sortedMasters.length > 0 ? sortedMasters[0] : null
+  // Get existing job if editing
+  const existingJob = jobId ? jobs.find(j => j.id === jobId) : null
+  const isEditMode = !!jobId
+
+  // Get default wallet: use existing job's walletId, provided defaultWalletId, or first wallet
+  const defaultWallet = existingJob?.walletId
+    ? wallets.find(w => w.id === existingJob.walletId) || null
+    : defaultWalletId 
+    ? wallets.find(w => w.id === defaultWalletId) || wallets[0] || null
+    : wallets.length > 0 ? wallets[0] : null
   
-  // Auto-generate job name (not displayed to user)
+  // Auto-generate job name (not displayed to user for create mode)
   const getDefaultJobName = () => {
     return `job_${Date.now()}`
   }
 
   const [formData, setFormData] = useState({
-    name: getDefaultJobName(),
+    name: '',
     schedule: '* * * * *',
     type: 'token_swap' as 'eth_transfer' | 'swap' | 'token_swap',
     toAddress: '',
     amount: '0.0000001',
+    useMax: false,
     chain: 'base',
-    walletId: defaultMasterWallet?.id || '',
+    walletId: '',
     fromToken: 'ETH' as 'ETH' | 'USDC',
     toToken: 'USDC' as 'ETH' | 'USDC',
     swapAmount: '0.0000001',
     tokenAddress: '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
+    swapDirection: 'eth_to_token' as 'eth_to_token' | 'token_to_eth',
+    fundingAmount: '',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Update walletId when default wallet loads or changes, or when modal opens
+  // Load existing job data when editing
   useEffect(() => {
-    if (isOpen && defaultMasterWallet) {
-      const newWalletId = defaultMasterWallet.id
-      setFormData(prev => {
-        if (prev.walletId !== newWalletId) {
-          return { 
-            ...prev, 
-            walletId: newWalletId,
-            name: getDefaultJobName()
-          }
-        }
-        return prev
+    if (!isOpen) return
+
+    if (isEditMode && jobId) {
+      // Find the job (might be loading)
+      const job = jobs.find(j => j.id === jobId)
+      if (job) {
+        // Job data is loaded, populate form
+      setFormData({
+        name: job.name || '',
+        schedule: job.schedule || '* * * * *',
+        type: (job.type || 'token_swap') as 'eth_transfer' | 'swap' | 'token_swap',
+        toAddress: job.toAddress || '',
+        amount: job.amount || '0.0000001',
+        useMax: (job as any).useMax || false,
+        chain: job.chain || 'base',
+        walletId: job.walletId || '',
+        fromToken: (job.fromToken || 'ETH') as 'ETH' | 'USDC',
+        toToken: (job.toToken || 'USDC') as 'ETH' | 'USDC',
+        swapAmount: job.swapAmount || '0.0000001',
+        tokenAddress: job.tokenAddress || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
+        swapDirection: (job as any).swapDirection || 'eth_to_token',
+        fundingAmount: '', // Don't show funding amount in edit mode
+      })
+      }
+    } else if (!isEditMode && defaultWallet) {
+      // Reset to defaults for create mode
+      const newWalletId = defaultWallet.id
+      setFormData({
+        name: getDefaultJobName(),
+        schedule: '* * * * *',
+        type: 'token_swap',
+        toAddress: '',
+        amount: '0.0000001',
+        useMax: false,
+        chain: 'base',
+        walletId: newWalletId,
+        fromToken: 'ETH',
+        toToken: 'USDC',
+        swapAmount: '0.0000001',
+        tokenAddress: '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
+        swapDirection: 'eth_to_token',
+        fundingAmount: '',
       })
     }
-  }, [isOpen, defaultMasterWallet?.id, defaultWalletId])
+  }, [isOpen, isEditMode, jobId, jobs, defaultWallet?.id, defaultWalletId])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,44 +141,64 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
     setError(null)
 
     try {
-      const response = await fetch('/api/cron/create', {
-        method: 'POST',
+      const url = isEditMode ? `/api/cron/update` : '/api/cron/create'
+      const method = isEditMode ? 'PUT' : 'POST'
+      
+      const requestBody: any = {
+        ...formData,
+      }
+      
+      if (isEditMode) {
+        requestBody.jobId = jobId
+        // Don't send fundingAmount when editing
+      } else {
+        requestBody.fundingAmount = formData.fundingAmount || undefined
+      }
+
+      const response = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(requestBody),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to create cron job')
+        throw new Error(data.error || `Failed to ${isEditMode ? 'update' : 'create'} cron job`)
       }
 
-          setFormData({
-            name: getDefaultJobName(),
-            schedule: '* * * * *',
-            type: 'token_swap',
-            toAddress: '',
-            amount: '0.0000001',
-            chain: 'base',
-            walletId: defaultMasterWallet?.id || '',
-            fromToken: 'ETH',
-            toToken: 'USDC',
-            swapAmount: '0.0000001',
-            tokenAddress: '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
-          })
+      if (!isEditMode) {
+        setFormData({
+          name: getDefaultJobName(),
+          schedule: '* * * * *',
+          type: 'token_swap',
+          toAddress: '',
+          amount: '0.0000001',
+          useMax: false,
+          chain: 'base',
+          walletId: defaultWallet?.id || '',
+          fromToken: 'ETH',
+          toToken: 'USDC',
+          swapAmount: '0.0000001',
+          tokenAddress: '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
+          swapDirection: 'eth_to_token',
+          fundingAmount: '',
+        })
+      }
+      
       onJobCreated()
       showToast({
         type: 'success',
-        message: 'Cron job created successfully',
+        message: isEditMode ? 'Cron job updated successfully' : 'Cron job created successfully',
       })
       onClose()
     } catch (err: any) {
       setError(err.message)
       showToast({
         type: 'error',
-        message: err.message || 'Failed to create cron job',
+        message: err.message || `Failed to ${isEditMode ? 'update' : 'create'} cron job`,
       })
     } finally {
       setLoading(false)
@@ -140,20 +207,13 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
 
   if (!isOpen) return null
 
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) {
-      onClose()
-    }
-  }
-
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-      onClick={handleBackdropClick}
     >
       <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center p-4 border-b border-gray-200">
-          <h3 className="text-xl font-semibold">Create New Cron Job</h3>
+          <h3 className="text-xl font-semibold">{isEditMode ? 'Edit Cron Job' : 'Create New Cron Job'}</h3>
           <button
             type="button"
             onClick={onClose}
@@ -164,6 +224,22 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
         </div>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4 p-4">
       
+      {isEditMode && (
+        <div className="flex flex-col gap-2">
+          <label htmlFor="name" className="text-sm font-medium">
+            Job Name
+          </label>
+          <input
+            id="name"
+            type="text"
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            className="px-3 py-2 border border-gray-300 rounded-md"
+            required
+          />
+        </div>
+      )}
+
       <div className="flex flex-col gap-2">
         <label htmlFor="type" className="text-sm font-medium">
           Job Type
@@ -214,40 +290,36 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
         </p>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="walletId" className="text-sm font-medium">
-          Parent Wallet
-        </label>
-        <select
-          id="walletId"
-          value={formData.walletId}
-          onChange={(e) => {
-            const selectedWallet = masterWallets.find(w => w.id === e.target.value)
-            setFormData({ 
-              ...formData, 
-              walletId: e.target.value,
-              name: getDefaultJobName()
-            })
-          }}
-          className="px-3 py-2 border border-gray-300 rounded-md"
-          required
-        >
-          <option value="">Select a wallet</option>
-          {masterWallets.map((wallet) => (
-            <option key={wallet.id} value={wallet.id}>
-              {wallet.name} ({wallet.address.slice(0, 6)}...{wallet.address.slice(-4)})
-            </option>
-          ))}
-        </select>
-        {masterWallets.length === 0 && (
-          <p className="text-xs text-gray-500">
-            No wallets available. <a href="#" onClick={(e) => { e.preventDefault(); onClose(); }} className="text-blue-600 hover:underline">Create one first</a>.
-          </p>
-        )}
-        <p className="text-xs text-gray-400">
-          A dedicated worker wallet will be created and funded automatically for each cron job.
-        </p>
-      </div>
+      {isEditMode ? (
+        <div className="flex flex-col gap-2">
+          <label htmlFor="walletId" className="text-sm font-medium">
+            Parent Wallet
+          </label>
+          <select
+            id="walletId"
+            value={formData.walletId}
+            onChange={(e) => setFormData({ ...formData, walletId: e.target.value })}
+            className="px-3 py-2 border border-gray-300 rounded-md"
+            required
+          >
+            <option value="">Select a wallet</option>
+            {wallets.map((wallet) => (
+              <option key={wallet.id} value={wallet.id}>
+                {wallet.name} ({wallet.address.slice(0, 6)}...{wallet.address.slice(-4)})
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : defaultWallet ? (
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium">
+            Wallet
+          </label>
+          <div className="px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-700">
+            {defaultWallet.name} ({defaultWallet.address.slice(0, 6)}...{defaultWallet.address.slice(-4)})
+          </div>
+        </div>
+      ) : null}
 
       {formData.type === 'eth_transfer' && (
         <>
@@ -353,8 +425,38 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
       {formData.type === 'token_swap' && (
         <>
           <div className="flex flex-col gap-2">
+            <label className="text-sm font-medium">
+              Swap Direction
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, swapDirection: 'eth_to_token' })}
+                className={`flex-1 rounded-md border px-3 py-2 text-sm ${
+                  formData.swapDirection === 'eth_to_token'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                ETH → Token
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, swapDirection: 'token_to_eth' })}
+                className={`flex-1 rounded-md border px-3 py-2 text-sm ${
+                  formData.swapDirection === 'token_to_eth'
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Token → ETH
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
             <label htmlFor="tokenAddress" className="text-sm font-medium">
-              Token Address
+              Token Address {formData.swapDirection === 'eth_to_token' ? '(to buy)' : '(to sell)'}
             </label>
             <input
               id="tokenAddress"
@@ -369,19 +471,36 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
           </div>
 
           <div className="flex flex-col gap-2">
-            <label htmlFor="customSwapAmount" className="text-sm font-medium">
-              Amount (ETH)
-            </label>
+            <div className="flex items-center justify-between">
+              <label htmlFor="customSwapAmount" className="text-sm font-medium">
+                Amount {formData.swapDirection === 'eth_to_token' ? '(ETH)' : '(Tokens)'}
+              </label>
+              <label className="flex items-center gap-1 text-xs text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={formData.useMax}
+                  onChange={(e) => setFormData({ ...formData, useMax: e.target.checked })}
+                  className="rounded border-gray-300"
+                />
+                Max
+              </label>
+            </div>
             <input
               id="customSwapAmount"
               type="number"
               step="0.000001"
               value={formData.swapAmount}
-              onChange={(e) => setFormData({ ...formData, swapAmount: e.target.value })}
+              onChange={(e) => setFormData({ ...formData, swapAmount: e.target.value, useMax: false })}
               className="px-3 py-2 border border-gray-300 rounded-md"
               placeholder="0.0000001"
-              required={formData.type === 'token_swap'}
+              required={formData.type === 'token_swap' && !formData.useMax}
+              disabled={formData.useMax}
             />
+            {formData.useMax && (
+              <p className="text-xs text-gray-500">
+                Will use the full {formData.swapDirection === 'eth_to_token' ? 'ETH' : 'token'} balance (minus gas fees) at execution time
+              </p>
+            )}
           </div>
         </>
       )}
@@ -402,6 +521,27 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
           <option value="mainnet">Ethereum Mainnet</option>
         </select>
       </div>
+
+      {!isEditMode && (
+        <div className="flex flex-col gap-2">
+          <label htmlFor="fundingAmount" className="text-sm font-medium">
+            Worker Wallet Funding Amount (ETH) <span className="text-gray-500 font-normal">(optional)</span>
+          </label>
+          <input
+            id="fundingAmount"
+            type="number"
+            step="0.000001"
+            min="0"
+            value={formData.fundingAmount}
+            onChange={(e) => setFormData({ ...formData, fundingAmount: e.target.value })}
+            className="px-3 py-2 border border-gray-300 rounded-md"
+            placeholder="0.0005"
+          />
+          <p className="text-xs text-gray-500">
+            Amount of ETH to send to the worker wallet from the parent wallet. Defaults to 0.0005 ETH if not specified.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-md text-red-700 text-sm">
@@ -429,7 +569,7 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
               onMouseEnter={(e) => !loading && (e.currentTarget.style.backgroundColor = '#1d4ed8')}
               onMouseLeave={(e) => !loading && (e.currentTarget.style.backgroundColor = '#2563eb')}
             >
-              {loading ? 'Creating...' : 'Create Cron Job'}
+              {loading ? (isEditMode ? 'Updating...' : 'Creating...') : (isEditMode ? 'Update Cron Job' : 'Create Cron Job')}
             </button>
           </div>
         </form>

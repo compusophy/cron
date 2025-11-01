@@ -1,8 +1,9 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { kv } from '@vercel/kv'
 import { Wallet } from './create'
-import { swapEthForToken } from '@/lib/swap'
+import { swapEthForToken, swapTokenForEth } from '@/lib/swap'
 import { recordWalletLog } from '@/lib/wallet-logs'
+import { getTokenMetadata } from '@/lib/token-metadata'
 
 const DEFAULT_TOKEN_ADDRESS = (process.env.DEFAULT_TOKEN_ADDRESS || process.env.NEXT_PUBLIC_DEFAULT_TOKEN_ADDRESS || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07') as `0x${string}`
 
@@ -14,7 +15,7 @@ export default async function handler(
     return res.status(405).json({ error: 'Method not allowed' })
   }
 
-  const { walletId, amount, tokenAddress = DEFAULT_TOKEN_ADDRESS, chain = 'base' } = req.body || {}
+  const { walletId, amount, tokenAddress = DEFAULT_TOKEN_ADDRESS, chain = 'base', swapDirection = 'eth_to_token' } = req.body || {}
 
   if (!walletId || typeof walletId !== 'string') {
     return res.status(400).json({ error: 'walletId is required' })
@@ -28,10 +29,15 @@ export default async function handler(
     return res.status(400).json({ error: 'Valid tokenAddress is required' })
   }
 
+  if (swapDirection !== 'eth_to_token' && swapDirection !== 'token_to_eth') {
+    return res.status(400).json({ error: 'swapDirection must be "eth_to_token" or "token_to_eth"' })
+  }
+
   const logDetails = {
     amount,
     tokenAddress,
     chain,
+    swapDirection,
   }
 
   try {
@@ -41,12 +47,33 @@ export default async function handler(
       return res.status(404).json({ error: 'Wallet not found' })
     }
 
-    const txHash = await swapEthForToken(
-      wallet.privateKey,
-      tokenAddress,
-      amount,
-      chain
-    )
+    let txHash: string
+
+    if (swapDirection === 'eth_to_token') {
+      txHash = await swapEthForToken(
+        wallet.privateKey,
+        tokenAddress,
+        amount,
+        chain
+      )
+    } else {
+      // Token to ETH - need to get token decimals
+      const rpcUrl = chain === 'base' 
+        ? (process.env.BASE_RPC_URL || 'https://base.publicnode.com')
+        : process.env.ETH_RPC_URL
+
+      const metadata = await getTokenMetadata(tokenAddress, rpcUrl)
+      const tokenDecimals = metadata?.decimals || 18
+
+      txHash = await swapTokenForEth(
+        wallet.privateKey,
+        tokenAddress,
+        amount,
+        tokenDecimals,
+        chain,
+        rpcUrl
+      )
+    }
 
     await recordWalletLog({
       walletId,

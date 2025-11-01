@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { kv } from '@vercel/kv'
-import { generateEthKeyPair } from '@/lib/eth'
+import { generateEthKeyPair, sendEth } from '@/lib/eth'
 import { randomBytes } from 'crypto'
 
 export type WalletType = 'master' | 'worker'
@@ -26,7 +26,7 @@ export default async function handler(
   }
 
   try {
-    const { name, parentId } = req.body || {}
+    const { name, parentId, fundingAmount } = req.body || {}
 
     let parentWallet: Wallet | null = null
 
@@ -102,6 +102,24 @@ export default async function handler(
     // Store in Redis
     await kv.set(`wallet:${walletId}`, wallet)
     await kv.sadd('wallets:active', walletId)
+
+    // Fund the wallet if parent exists and funding amount is provided
+    if (parentWallet && fundingAmount) {
+      const fundingAmountNum = parseFloat(fundingAmount)
+      if (!isNaN(fundingAmountNum) && fundingAmountNum > 0) {
+        try {
+          // Use 'base' as default chain - you might want to make this configurable
+          await sendEth(parentWallet.privateKey, wallet.address, fundingAmount, 'base')
+        } catch (fundingError: any) {
+          // Log error but don't fail wallet creation
+          console.error('Failed to fund wallet:', fundingError)
+          // Optionally delete the wallet if funding fails
+          // await kv.srem('wallets:active', walletId)
+          // await kv.del(`wallet:${walletId}`)
+          // return res.status(500).json({ error: `Failed to fund wallet: ${fundingError.message}` })
+        }
+      }
+    }
 
     return res.status(201).json({
       success: true,

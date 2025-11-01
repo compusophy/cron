@@ -23,10 +23,10 @@ export default async function handler(
       return res.status(404).json({ error: 'Cron job not found' })
     }
 
-    // Remove worker wallet if present
-    if (jobConfig.workerWalletId) {
-      await kv.srem('wallets:active', jobConfig.workerWalletId)
-      await kv.del(`wallet:${jobConfig.workerWalletId}`)
+    // Remove job from wallet's jobs set
+    if (jobConfig.walletId) {
+      const walletJobsKey = `wallet:${jobConfig.walletId}:jobs`
+      await kv.srem(walletJobsKey, jobId)
     }
 
     // Remove from active jobs set

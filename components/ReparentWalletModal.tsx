@@ -111,16 +111,9 @@ export default function ReparentWalletModal({ isOpen, onClose, wallet, wallets, 
     }
   }
 
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && !loading) {
-      onClose()
-    }
-  }
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
-      onClick={handleBackdropClick}
     >
       <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-gray-200 p-4">

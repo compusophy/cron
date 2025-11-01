@@ -1,7 +1,7 @@
 import { createWalletClient, createPublicClient, http, parseEther, parseUnits, formatEther, formatUnits, encodeFunctionData, type Address, type Chain } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { base } from 'viem/chains'
-import { swapEthForTokenZeroEx } from './zeroex-swap'
+import { swapEthForTokenZeroEx, swapTokenForEthZeroEx } from './zeroex-swap'
 import { withNonceLock } from './nonce-lock'
 
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006' as Address
@@ -205,4 +205,15 @@ export async function swapEthForToken(
   rpcUrl?: string
 ): Promise<string> {
   return await swapEthForTokenZeroEx(privateKey, tokenAddress, amount, chainName, rpcUrl)
+}
+
+export async function swapTokenForEth(
+  privateKey: string,
+  tokenAddress: string,
+  amount: string,
+  tokenDecimals: number,
+  chainName: string = 'base',
+  rpcUrl?: string
+): Promise<string> {
+  return await swapTokenForEthZeroEx(privateKey, tokenAddress, amount, tokenDecimals, chainName, rpcUrl)
 }

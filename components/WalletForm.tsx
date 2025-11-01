@@ -27,56 +27,35 @@ export default function WalletForm({ onWalletCreated, isOpen, onClose, parentWal
     return `${requiredPrefix}${nextNumber}`
   }, [parentWallet, allWallets, requiredPrefix])
 
-  const validateName = (name: string): string | null => {
-    if (!parentWallet) {
-      // Master wallet - no validation needed
-      return null
-    }
-
-    if (!name.trim()) {
-      return 'Wallet name is required'
-    }
-
-    if (!name.startsWith(requiredPrefix)) {
-      return `Child wallet name must start with "${requiredPrefix}"`
-    }
-
-    // Check that after the prefix, there's a valid number
-    const suffix = name.slice(requiredPrefix.length)
-    if (!suffix || !/^\d+$/.test(suffix)) {
-      return `Name must end with a number after "${requiredPrefix}"`
-    }
-
-    return null
-  }
-
   const [formData, setFormData] = useState({
     name: '',
+    fundingAmount: '',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [validationError, setValidationError] = useState<string | null>(null)
   const { showToast } = useToast()
 
   useEffect(() => {
     if (isOpen) {
-      setFormData({ name: defaultName })
+      const numberPart = parentWallet ? defaultName.slice(requiredPrefix.length) : ''
+      setFormData({ 
+        name: numberPart,
+        fundingAmount: ''
+      })
       setError(null)
-      setValidationError(null)
     } else {
-      setFormData({ name: '' })
+      setFormData({ name: '', fundingAmount: '' })
       setError(null)
-      setValidationError(null)
     }
-  }, [isOpen, defaultName])
+  }, [isOpen, defaultName, requiredPrefix, parentWallet])
 
   const handleNameChange = (value: string) => {
-    setFormData({ name: value })
+    // Only allow numbers for child wallets
     if (parentWallet) {
-      const validation = validateName(value)
-      setValidationError(validation)
+      const numericValue = value.replace(/[^0-9]/g, '')
+      setFormData({ ...formData, name: numericValue })
     } else {
-      setValidationError(null)
+      setFormData({ ...formData, name: value })
     }
   }
 
@@ -85,22 +64,17 @@ export default function WalletForm({ onWalletCreated, isOpen, onClose, parentWal
     setLoading(true)
     setError(null)
 
-    // Validate name if it's a child wallet
-    if (parentWallet) {
-      const validation = validateName(formData.name)
-      if (validation) {
-        setValidationError(validation)
-        setLoading(false)
-        return
-      }
-    }
-
     // Ensure name is provided for child wallets
     if (parentWallet && !formData.name.trim()) {
-      setValidationError('Wallet name is required')
+      setError('Wallet number is required')
       setLoading(false)
       return
     }
+
+    // Construct full name
+    const fullName = parentWallet 
+      ? `${requiredPrefix}${formData.name}` 
+      : formData.name
 
     try {
       const response = await fetch('/api/wallets/create', {
@@ -109,8 +83,9 @@ export default function WalletForm({ onWalletCreated, isOpen, onClose, parentWal
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          name: formData.name,
+          name: fullName,
           parentId: parentWallet?.id ?? null,
+          fundingAmount: formData.fundingAmount || undefined,
         }),
       })
 
@@ -120,14 +95,14 @@ export default function WalletForm({ onWalletCreated, isOpen, onClose, parentWal
         throw new Error(data.error || 'Failed to create wallet')
       }
 
-      const createdName = data.wallet?.name || formData.name || 'Wallet'
-      setFormData({ name: '' })
+      const createdName = data.wallet?.name || fullName || 'Wallet'
+      setFormData({ name: '', fundingAmount: '' })
       onWalletCreated()
       showToast({
         type: 'success',
         message: parentWallet
-          ? `Child wallet “${createdName}” created under ${parentWallet.name}`
-          : `Master wallet “${createdName}” created`,
+          ? `Child wallet "${createdName}" created under ${parentWallet.name}`
+          : `Master wallet "${createdName}" created`,
       })
       onClose()
     } catch (err: any) {
@@ -143,16 +118,9 @@ export default function WalletForm({ onWalletCreated, isOpen, onClose, parentWal
 
   if (!isOpen) return null
 
-  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) {
-      onClose()
-    }
-  }
-
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-      onClick={handleBackdropClick}
     >
       <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center p-4 border-b border-gray-200">
@@ -179,30 +147,52 @@ export default function WalletForm({ onWalletCreated, isOpen, onClose, parentWal
             <label htmlFor="name" className="text-sm font-medium">
               Wallet Name {parentWallet && <span className="text-red-500">*</span>}
             </label>
-            {parentWallet && (
-              <div className="text-xs text-gray-600 bg-gray-50 px-2 py-1 rounded border border-gray-200">
-                Required prefix: <span className="font-mono font-semibold">{requiredPrefix}</span>
+            {parentWallet ? (
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-gray-700 font-mono">
+                  {requiredPrefix}
+                </span>
+                <input
+                  id="name"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={formData.name}
+                  onChange={(e) => handleNameChange(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-md flex-1"
+                  placeholder="1"
+                  required
+                />
               </div>
+            ) : (
+              <input
+                id="name"
+                type="text"
+                value={formData.name}
+                onChange={(e) => handleNameChange(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md"
+                placeholder="My Wallet"
+              />
             )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="fundingAmount" className="text-sm font-medium">
+              Initial Funding Amount (ETH) <span className="text-gray-500 font-normal">(optional)</span>
+            </label>
             <input
-              id="name"
-              type="text"
-              value={formData.name}
-              onChange={(e) => handleNameChange(e.target.value)}
-              className={`px-3 py-2 border rounded-md ${
-                validationError
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                  : 'border-gray-300 focus:border-blue-500 focus:ring-blue-500'
-              }`}
-              placeholder={parentWallet ? defaultName : 'My Wallet'}
-              required={!!parentWallet}
+              id="fundingAmount"
+              type="number"
+              step="0.000001"
+              min="0"
+              value={formData.fundingAmount}
+              onChange={(e) => setFormData({ ...formData, fundingAmount: e.target.value })}
+              className="px-3 py-2 border border-gray-300 rounded-md"
+              placeholder="0.0"
             />
-            {validationError && (
-              <p className="text-xs text-red-600">{validationError}</p>
-            )}
-            {parentWallet && !validationError && formData.name && (
-              <p className="text-xs text-green-600">✓ Name format is valid</p>
-            )}
+            <p className="text-xs text-gray-500">
+              Amount of ETH to send to the new wallet from the parent wallet (if creating a child wallet)
+            </p>
           </div>
 
             {error && (

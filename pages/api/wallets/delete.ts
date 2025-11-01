@@ -24,15 +24,19 @@ export default async function handler(
       return res.status(404).json({ error: 'Wallet not found' })
     }
 
-    // If this is a worker wallet with a cron job, delete the cron job first
-    if (wallet.jobId) {
-      const jobConfig = await kv.get<CronJobConfig>(`cron:job:${wallet.jobId}`)
-      if (jobConfig) {
+    // Delete all cron jobs associated with this wallet
+    const walletJobsKey = `wallet:${walletId}:jobs`
+    const jobIds = await kv.smembers(walletJobsKey) as string[]
+    
+    if (jobIds && jobIds.length > 0) {
+      for (const jobId of jobIds) {
         // Remove from active jobs set
-        await kv.srem('cron:jobs:active', wallet.jobId)
+        await kv.srem('cron:jobs:active', jobId)
         // Delete the job config
-        await kv.del(`cron:job:${wallet.jobId}`)
+        await kv.del(`cron:job:${jobId}`)
       }
+      // Delete the wallet jobs tracking set
+      await kv.del(walletJobsKey)
     }
 
     // Check for active worker wallets under this master

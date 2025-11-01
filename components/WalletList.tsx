@@ -42,10 +42,10 @@ interface Balances {
 
 interface CronJob {
   id: string
-  name: string
+  name?: string
   type: 'eth_transfer' | 'swap' | 'token_swap'
   enabled: boolean
-  workerWalletId?: string
+  walletId?: string
 }
 
 export default function WalletList() {
@@ -127,6 +127,38 @@ export default function WalletList() {
     }
   }
 
+  const handleDeleteCronJob = async (jobId: string) => {
+    if (!confirm('Are you sure you want to delete this cron job? This action cannot be undone.')) {
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/cron/delete?jobId=${jobId}`, {
+        method: 'DELETE',
+      })
+
+      if (response.ok) {
+        refreshBalances()
+        showToast({
+          type: 'success',
+          message: 'Cron job deleted successfully',
+        })
+      } else {
+        const data = await response.json()
+        showToast({
+          type: 'error',
+          message: data.error || 'Failed to delete cron job',
+        })
+      }
+    } catch (err) {
+      console.error('Failed to delete cron job:', err)
+      showToast({
+        type: 'error',
+        message: 'Failed to delete cron job',
+      })
+    }
+  }
+
   if (error) {
     return (
       <div className="p-4 bg-red-50 border border-red-200 rounded-md text-red-700">
@@ -150,6 +182,17 @@ export default function WalletList() {
   // Create maps for cron job info
   const jobIdToJob = cronJobs.reduce<Record<string, CronJob>>((acc, job) => {
     acc[job.id] = job
+    return acc
+  }, {})
+  
+  // Create a map of walletId -> array of cron jobs
+  const walletJobsMap = cronJobs.reduce<Record<string, CronJob[]>>((acc, job) => {
+    if (job.walletId) {
+      if (!acc[job.walletId]) {
+        acc[job.walletId] = []
+      }
+      acc[job.walletId].push(job)
+    }
     return acc
   }, {})
 
@@ -177,11 +220,11 @@ export default function WalletList() {
           variant={wallet.parentId ? 'worker' : 'master'}
           copiedAddress={copiedAddress}
           onCopyAddress={copyAddress}
-          cronJob={wallet.jobId ? jobIdToJob[wallet.jobId] : null}
-          cronJobId={wallet.jobId || null}
-          onCreateCronJob={!wallet.parentId ? () => setCreateCronJobModal({ parentWalletId: wallet.id }) : undefined}
-          onPauseCronJob={wallet.jobId ? () => handlePauseCronJob(wallet.jobId!) : undefined}
-          onEditCronJob={wallet.jobId ? () => setEditCronJobModal({ jobId: wallet.jobId! }) : undefined}
+          cronJobs={walletJobsMap[wallet.id] || []}
+          onCreateCronJob={() => setCreateCronJobModal({ parentWalletId: wallet.id })}
+          onPauseCronJob={(jobId) => handlePauseCronJob(jobId)}
+          onEditCronJob={(jobId) => setEditCronJobModal({ jobId })}
+          onDeleteCronJob={(jobId) => handleDeleteCronJob(jobId)}
           onShowPrivateKey={(walletId) => {
             fetch(`/api/wallets/get?walletId=${walletId}`)
               .then(res => res.json())
