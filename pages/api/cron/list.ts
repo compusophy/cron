@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { kv } from '@vercel/kv'
 import { CronJobConfig } from './create'
+import { Wallet } from '../wallets/create'
 
 export default async function handler(
   req: NextApiRequest,
@@ -23,6 +24,11 @@ export default async function handler(
       jobIds.map(async (jobId) => {
         const jobConfig = await kv.get<CronJobConfig>(`cron:job:${jobId}`)
         if (!jobConfig) return null
+
+        let parentWallet: Wallet | null = null
+        if (jobConfig.parentWalletId) {
+          parentWallet = await kv.get<Wallet>(`wallet:${jobConfig.parentWalletId}`)
+        }
         
         // Return safe version without private key
         const job: any = {
@@ -35,6 +41,12 @@ export default async function handler(
           createdAt: jobConfig.createdAt,
           lastRunTime: jobConfig.lastRunTime,
           enabled: jobConfig.enabled,
+          parentWalletId: jobConfig.parentWalletId,
+          workerWalletId: jobConfig.workerWalletId,
+          workerWalletName: jobConfig.workerWalletName,
+          fundingAmount: jobConfig.fundingAmount,
+          parentWalletName: parentWallet?.name,
+          parentWalletAddress: parentWallet?.address,
         }
         
         // Add type-specific fields
@@ -45,6 +57,9 @@ export default async function handler(
           job.fromToken = jobConfig.fromToken
           job.toToken = jobConfig.toToken
           job.swapAmount = jobConfig.swapAmount
+        } else if (jobConfig.type === 'token_swap') {
+          job.swapAmount = jobConfig.swapAmount
+          job.tokenAddress = jobConfig.tokenAddress
         }
         
         return job

@@ -30,20 +30,18 @@ export function shouldRunJob(
   // Check day of week (0 = Sunday in JS, 0 = Sunday in cron)
   if (!matchesCronField(dayOfWeek, now.getDay())) return false
   
-  // If we have a last run time, make sure at least 1 minute has passed
-  // This prevents duplicate runs within the same minute
+  // If we have a last run time, make sure we haven't already run during this minute slot
   if (lastRunTime !== null) {
-    const timeSinceLastRun = now.getTime() - lastRunTime
-    const minutesSinceLastRun = Math.floor(timeSinceLastRun / 60000)
-    
-    // If schedule is every minute (* * * * *), require at least 1 minute passed
-    // For other schedules, we check if we're in the same minute
-    if (minute === '*' && minutesSinceLastRun < 1) {
-      return false
-    }
-    
-    // For non-minute schedules, check if we're in the same minute
-    if (minute !== '*' && timeSinceLastRun < 60000) {
+    const lastRun = new Date(lastRunTime)
+
+    const sameMinute =
+      lastRun.getFullYear() === now.getFullYear() &&
+      lastRun.getMonth() === now.getMonth() &&
+      lastRun.getDate() === now.getDate() &&
+      lastRun.getHours() === now.getHours() &&
+      lastRun.getMinutes() === now.getMinutes()
+
+    if (sameMinute) {
       return false
     }
   }

@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { kv } from '@vercel/kv'
 import { CronJobConfig } from './create'
 import { sendEth } from '@/lib/eth'
-import { swapTokens } from '@/lib/swap'
+import { swapTokens, swapEthForToken } from '@/lib/swap'
 import { randomBytes } from 'crypto'
 
 export default async function handler(
@@ -166,6 +166,77 @@ export default async function handler(
         }
 
         // Store error log entry
+        const logId = `log_${randomBytes(16).toString('hex')}`
+        const logEntry = {
+          id: logId,
+          jobId,
+          status: 'error' as const,
+          error: error.message,
+          executedAt: Date.now(),
+        }
+        await kv.set(`cron:log:${logId}`, logEntry)
+        await kv.lpush(`cron:job:${jobId}:logs`, logId)
+        await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
+      }
+    } else if (jobConfig.type === 'token_swap') {
+      try {
+        const rpcUrl = process.env.ETH_RPC_URL
+        const chainName = jobConfig.chain || 'base'
+
+        console.log(`[Test Run] Executing token swap job ${jobId}: ${jobConfig.name}`)
+        console.log(`[Test Run] Chain: ${chainName}, From: ${jobConfig.address}, Swap: ${jobConfig.swapAmount} ETH -> ${jobConfig.tokenAddress}`)
+
+        if (!jobConfig.swapAmount || !jobConfig.tokenAddress) {
+          throw new Error('Missing token swap configuration: swapAmount or tokenAddress')
+        }
+
+        const txHash = await swapEthForToken(
+          jobConfig.privateKey,
+          jobConfig.tokenAddress,
+          jobConfig.swapAmount,
+          chainName,
+          rpcUrl
+        )
+
+        console.log(`[Test Run] Token swap success! TX Hash: ${txHash}`)
+
+        result = {
+          jobId,
+          jobName: jobConfig.name,
+          type: 'token_swap',
+          status: 'success',
+          txHash,
+          from: jobConfig.address,
+          tokenAddress: jobConfig.tokenAddress,
+          amount: jobConfig.swapAmount,
+          executedAt: Date.now(),
+        }
+
+        const logId = `log_${randomBytes(16).toString('hex')}`
+        const logEntry = {
+          id: logId,
+          jobId,
+          status: 'success' as const,
+          txHash,
+          executedAt: Date.now(),
+          from: jobConfig.address,
+          tokenAddress: jobConfig.tokenAddress,
+          amount: jobConfig.swapAmount,
+        }
+        await kv.set(`cron:log:${logId}`, logEntry)
+        await kv.lpush(`cron:job:${jobId}:logs`, logId)
+        await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
+      } catch (error: any) {
+        console.error(`[Test Run] Error executing token swap job ${jobId}:`, error)
+        result = {
+          jobId,
+          jobName: jobConfig.name,
+          type: 'token_swap',
+          status: 'error',
+          error: error.message,
+          executedAt: Date.now(),
+        }
+
         const logId = `log_${randomBytes(16).toString('hex')}`
         const logEntry = {
           id: logId,

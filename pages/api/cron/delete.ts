@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { kv } from '@vercel/kv'
+import { CronJobConfig } from './create'
 
 export default async function handler(
   req: NextApiRequest,
@@ -14,6 +15,18 @@ export default async function handler(
 
     if (!jobId || typeof jobId !== 'string') {
       return res.status(400).json({ error: 'Missing jobId parameter' })
+    }
+
+    const jobConfig = await kv.get<CronJobConfig>(`cron:job:${jobId}`)
+
+    if (!jobConfig) {
+      return res.status(404).json({ error: 'Cron job not found' })
+    }
+
+    // Remove worker wallet if present
+    if (jobConfig.workerWalletId) {
+      await kv.srem('wallets:active', jobConfig.workerWalletId)
+      await kv.del(`wallet:${jobConfig.workerWalletId}`)
     }
 
     // Remove from active jobs set

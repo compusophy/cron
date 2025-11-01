@@ -11,6 +11,7 @@ interface LogEntry {
   from?: string
   to?: string
   amount?: string
+  tokenAddress?: string
 }
 
 export default async function handler(

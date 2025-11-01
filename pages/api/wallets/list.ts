@@ -30,6 +30,9 @@ export default async function handler(
           name: wallet.name,
           address: wallet.address,
           createdAt: wallet.createdAt,
+          type: wallet.type,
+          parentId: wallet.parentId || null,
+          jobId: wallet.jobId || null,
         }
       })
     )

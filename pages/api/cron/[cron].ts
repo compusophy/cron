@@ -3,6 +3,29 @@ import { kv } from '@vercel/kv'
 import { CronJobConfig } from './create'
 import { shouldRunJob } from '@/lib/cron-scheduler'
 import { sendEth } from '@/lib/eth'
+import { recordWalletLog } from '@/lib/wallet-logs'
+
+function resolveLogWalletId(jobConfig: CronJobConfig) {
+  return jobConfig.workerWalletId || jobConfig.parentWalletId || null
+}
+
+async function recordWalletActivity(jobConfig: CronJobConfig, type: string, status: 'success' | 'error', payload: { txHash?: string; message?: string; details?: Record<string, any> }) {
+  const walletId = resolveLogWalletId(jobConfig)
+  if (!walletId) return
+
+  try {
+    await recordWalletLog({
+      walletId,
+      type,
+      status,
+      txHash: payload.txHash,
+      message: payload.message,
+      details: payload.details,
+    })
+  } catch (err) {
+    console.warn('Failed to record wallet log for cron job', jobConfig.id, err)
+  }
+}
 
 export default async function handler(
   req: NextApiRequest,
@@ -67,6 +90,15 @@ export default async function handler(
               rpcUrl
             )
 
+            await recordWalletActivity(jobConfig, 'send', 'success', {
+              txHash,
+              details: {
+                to: jobConfig.toAddress,
+                amount: jobConfig.amount,
+                chain: jobConfig.chain,
+              },
+            })
+
             result = {
               jobId,
               jobName: jobConfig.name,
@@ -79,6 +111,15 @@ export default async function handler(
               executedAt: Date.now(),
             }
           } catch (error: any) {
+            await recordWalletActivity(jobConfig, 'send', 'error', {
+              message: error.message,
+              details: {
+                to: jobConfig.toAddress,
+                amount: jobConfig.amount,
+                chain: jobConfig.chain,
+              },
+            })
+
             result = {
               jobId,
               jobName: jobConfig.name,

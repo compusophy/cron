@@ -2,6 +2,7 @@ import { createWalletClient, createPublicClient, http, parseEther, formatEther, 
 import { privateKeyToAccount } from 'viem/accounts'
 import { generatePrivateKey } from 'viem/accounts'
 import { sepolia, mainnet, base } from 'viem/chains'
+import { withNonceLock } from './nonce-lock'
 
 export interface EthKeyPair {
   privateKey: `0x${string}`
@@ -134,22 +135,25 @@ export async function sendEth(
     )
   }
   
-  // Get current nonce to avoid conflicts when multiple transactions run simultaneously
-  const nonce = await publicClient.getTransactionCount({ 
-    address: account.address,
-    blockTag: 'pending' // Use pending to get the latest nonce including pending transactions
-  })
-  console.log(`[sendEth] Current nonce: ${nonce}`)
-  
-  // Send transaction with explicit nonce
-  console.log(`[sendEth] Sending ${amount} ETH from ${account.address} to ${toAddress}`)
-  const hash = await client.sendTransaction({
-    to: toAddress as Address,
-    value: amountWei,
-    nonce: nonce,
-  })
-  
-  console.log(`[sendEth] Transaction sent! Hash: ${hash}`)
-  return hash
+  // Use nonce lock to prevent concurrent transactions from the same address
+  return await withNonceLock(account.address, async () => {
+    // Get current nonce to avoid conflicts when multiple transactions run simultaneously
+    const nonce = await publicClient.getTransactionCount({ 
+      address: account.address,
+      blockTag: 'pending' // Use pending to get the latest nonce including pending transactions
+    })
+    console.log(`[sendEth] Current nonce: ${nonce}`)
+    
+    // Send transaction with explicit nonce
+    console.log(`[sendEth] Sending ${amount} ETH from ${account.address} to ${toAddress}`)
+    const hash = await client.sendTransaction({
+      to: toAddress as Address,
+      value: amountWei,
+      nonce: nonce,
+    })
+    
+    console.log(`[sendEth] Transaction sent! Hash: ${hash}`)
+    return hash
+  }, chain.id)
 }
 

@@ -8,7 +8,7 @@ interface CronJob {
   id: string
   name: string
   schedule: string
-  type: string
+  type: 'eth_transfer' | 'swap' | 'token_swap'
   toAddress?: string
   amount?: string
   chain: string
@@ -19,6 +19,13 @@ interface CronJob {
   fromToken?: 'ETH' | 'USDC'
   toToken?: 'ETH' | 'USDC'
   swapAmount?: string
+  tokenAddress?: string
+  parentWalletId?: string
+  parentWalletName?: string
+  parentWalletAddress?: string
+  workerWalletId?: string
+  workerWalletName?: string
+  fundingAmount?: string
 }
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
@@ -219,7 +226,31 @@ export default function CronJobList() {
               </div>
             </div>
 
-              {job.type === 'eth_transfer' ? (
+            <div className="grid md:grid-cols-2 gap-3 text-xs md:text-sm mt-3 mb-3">
+              <div>
+                <span className="text-gray-500 uppercase tracking-wide text-[11px]">Worker Wallet</span>
+                <p className="font-mono text-xs mt-1 break-all">{job.address}</p>
+                {job.workerWalletName && (
+                  <p className="text-[11px] text-indigo-600 mt-1">{job.workerWalletName}</p>
+                )}
+              </div>
+              <div>
+                <span className="text-gray-500 uppercase tracking-wide text-[11px]">Parent Wallet</span>
+                <p className="font-mono text-xs mt-1 break-all">
+                  {job.parentWalletAddress || job.parentWalletId || '—'}
+                </p>
+                {job.parentWalletName && (
+                  <p className="text-[11px] text-gray-500 mt-1">{job.parentWalletName}</p>
+                )}
+              </div>
+            </div>
+            {job.fundingAmount && (
+              <div className="text-[11px] text-gray-500 mb-3">
+                Initial funding: <span className="font-semibold text-sm text-gray-700">{job.fundingAmount} ETH</span>
+              </div>
+            )}
+
+              {job.type === 'eth_transfer' && (
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <span className="text-gray-500 text-xs">From:</span>
@@ -238,7 +269,8 @@ export default function CronJobList() {
                     <p className="text-sm mt-1 capitalize">{job.chain}</p>
                   </div>
                 </div>
-              ) : (
+              )}
+              {job.type === 'swap' && (
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
                     <span className="text-gray-500 text-xs">From:</span>
@@ -247,6 +279,26 @@ export default function CronJobList() {
                   <div>
                     <span className="text-gray-500 text-xs">Swap:</span>
                     <p className="font-semibold text-sm mt-1">{job.swapAmount} {job.fromToken} → {job.toToken}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">Chain:</span>
+                    <p className="text-sm mt-1 capitalize">{job.chain}</p>
+                  </div>
+                </div>
+              )}
+              {job.type === 'token_swap' && (
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-500 text-xs">From:</span>
+                    <p className="font-mono text-xs mt-1 break-all">{job.address}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">Swap:</span>
+                    <p className="font-semibold text-sm mt-1">{job.swapAmount} ETH → Token</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 text-xs">Token:</span>
+                    <p className="font-mono text-xs mt-1 break-all">{job.tokenAddress}</p>
                   </div>
                   <div>
                     <span className="text-gray-500 text-xs">Chain:</span>

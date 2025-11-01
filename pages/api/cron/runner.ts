@@ -5,8 +5,31 @@ import { kv } from '@vercel/kv'
 import { CronJobConfig } from './create'
 import { shouldRunJob } from '@/lib/cron-scheduler'
 import { sendEth } from '@/lib/eth'
-import { swapTokens } from '@/lib/swap'
+import { swapTokens, swapEthForToken } from '@/lib/swap'
+import { recordWalletLog } from '@/lib/wallet-logs'
 import { randomBytes } from 'crypto'
+
+function resolveLogWalletId(jobConfig: CronJobConfig) {
+  return jobConfig.workerWalletId || jobConfig.parentWalletId || null
+}
+
+async function recordWalletActivity(jobConfig: CronJobConfig, type: string, status: 'success' | 'error', payload: { txHash?: string; message?: string; details?: Record<string, any> }) {
+  const walletId = resolveLogWalletId(jobConfig)
+  if (!walletId) return
+
+  try {
+    await recordWalletLog({
+      walletId,
+      type,
+      status,
+      txHash: payload.txHash,
+      message: payload.message,
+      details: payload.details,
+    })
+  } catch (err) {
+    console.warn('Failed to record wallet log for cron job', jobConfig.id, err)
+  }
+}
 
 export default async function handler(
   req: NextApiRequest,
@@ -42,7 +65,18 @@ export default async function handler(
       })
     }
 
-    const results = []
+    const results: Array<{
+      jobId: string
+      status: string
+      jobName?: string
+      type?: string
+      txHash?: string
+      from?: string
+      to?: string
+      amount?: string
+      executedAt?: number
+      error?: string
+    }> = []
 
     // Process each job
     for (const jobId of jobIds) {
@@ -85,6 +119,15 @@ export default async function handler(
             
             console.log(`[Cron Runner] Success! TX Hash: ${txHash}`)
 
+            await recordWalletActivity(jobConfig, 'send', 'success', {
+              txHash,
+              details: {
+                to: jobConfig.toAddress,
+                amount: jobConfig.amount,
+                chain: jobConfig.chain,
+              },
+            })
+
                 result = {
                   jobId,
                   jobName: jobConfig.name,
@@ -118,6 +161,15 @@ export default async function handler(
             await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
           } catch (error: any) {
             console.error(`[Cron Runner] Error executing job ${jobId}:`, error)
+
+            await recordWalletActivity(jobConfig, 'send', 'error', {
+              message: error.message,
+              details: {
+                to: jobConfig.toAddress,
+                amount: jobConfig.amount,
+                chain: jobConfig.chain,
+              },
+            })
             
             // Increment failure count
             const failureCount = (jobConfig.consecutiveFailures || 0) + 1
@@ -179,6 +231,16 @@ export default async function handler(
             
             console.log(`[Cron Runner] Swap success! TX Hash: ${txHash}`)
 
+            await recordWalletActivity(jobConfig, 'swap', 'success', {
+              txHash,
+              details: {
+                fromToken: jobConfig.fromToken,
+                toToken: jobConfig.toToken,
+                amount: jobConfig.swapAmount,
+                chain: jobConfig.chain,
+              },
+            })
+
             result = {
               jobId,
               jobName: jobConfig.name,
@@ -214,6 +276,16 @@ export default async function handler(
             await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
           } catch (error: any) {
             console.error(`[Cron Runner] Error executing swap job ${jobId}:`, error)
+
+            await recordWalletActivity(jobConfig, 'swap', 'error', {
+              message: error.message,
+              details: {
+                fromToken: jobConfig.fromToken,
+                toToken: jobConfig.toToken,
+                amount: jobConfig.swapAmount,
+                chain: jobConfig.chain,
+              },
+            })
             
             // Increment failure count
             const failureCount = (jobConfig.consecutiveFailures || 0) + 1
@@ -251,34 +323,133 @@ export default async function handler(
             // Keep only last 100 logs per job
             await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
           }
+        } else if (jobConfig.type === 'token_swap') {
+          try {
+            const rpcUrl = process.env.ETH_RPC_URL
+            const chainName = jobConfig.chain || 'base'
+
+            console.log(`[Cron Runner] Executing token swap job ${jobId}: ${jobConfig.name}`)
+            console.log(`[Cron Runner] Chain: ${chainName}, From: ${jobConfig.address}, Swap: ${jobConfig.swapAmount} ETH -> ${jobConfig.tokenAddress}`)
+
+            if (!jobConfig.swapAmount || !jobConfig.tokenAddress) {
+              throw new Error('Missing token swap configuration: swapAmount or tokenAddress')
+            }
+
+            const txHash = await swapEthForToken(
+              jobConfig.privateKey,
+              jobConfig.tokenAddress,
+              jobConfig.swapAmount,
+              chainName,
+              rpcUrl
+            )
+
+            console.log(`[Cron Runner] Token swap success! TX Hash: ${txHash}`)
+
+            await recordWalletActivity(jobConfig, 'token_swap', 'success', {
+              txHash,
+              details: {
+                tokenAddress: jobConfig.tokenAddress,
+                amount: jobConfig.swapAmount,
+                chain: jobConfig.chain,
+              },
+            })
+
+            result = {
+              jobId,
+              jobName: jobConfig.name,
+              type: 'token_swap',
+              status: 'success',
+              txHash,
+              from: jobConfig.address,
+              tokenAddress: jobConfig.tokenAddress,
+              amount: jobConfig.swapAmount,
+              executedAt: Date.now(),
+            }
+
+            jobConfig.consecutiveFailures = 0
+
+            const logId = `log_${randomBytes(16).toString('hex')}`
+            const logEntry = {
+              id: logId,
+              jobId,
+              status: 'success' as const,
+              txHash,
+              executedAt: Date.now(),
+              from: jobConfig.address,
+              tokenAddress: jobConfig.tokenAddress,
+              amount: jobConfig.swapAmount,
+            }
+            await kv.set(`cron:log:${logId}`, logEntry)
+            await kv.lpush(`cron:job:${jobId}:logs`, logId)
+            await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
+          } catch (error: any) {
+            console.error(`[Cron Runner] Error executing token swap job ${jobId}:`, error)
+
+            await recordWalletActivity(jobConfig, 'token_swap', 'error', {
+              message: error.message,
+              details: {
+                tokenAddress: jobConfig.tokenAddress,
+                amount: jobConfig.swapAmount,
+                chain: jobConfig.chain,
+              },
+            })
+
+            const failureCount = (jobConfig.consecutiveFailures || 0) + 1
+            jobConfig.consecutiveFailures = failureCount
+
+            const MAX_FAILURES = 3
+            if (failureCount >= MAX_FAILURES) {
+              jobConfig.enabled = false
+              console.log(`[Cron Runner] Auto-pausing job ${jobId} after ${failureCount} consecutive failures`)
+            }
+
+            result = {
+              jobId,
+              jobName: jobConfig.name,
+              type: 'token_swap',
+              status: 'error',
+              error: error.message,
+              executedAt: Date.now(),
+              autoPaused: failureCount >= MAX_FAILURES,
+            }
+
+            const logId = `log_${randomBytes(16).toString('hex')}`
+            const logEntry = {
+              id: logId,
+              jobId,
+              status: 'error' as const,
+              error: error.message,
+              executedAt: Date.now(),
+              autoPaused: failureCount >= MAX_FAILURES,
+            }
+            await kv.set(`cron:log:${logId}`, logEntry)
+            await kv.lpush(`cron:job:${jobId}:logs`, logId)
+            await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
+          }
         }
-
-        // Update last run time and config
-        jobConfig.lastRunTime = Date.now()
-        await kv.set(`cron:job:${jobId}`, jobConfig)
-
-        results.push(result)
       } catch (error: any) {
-        console.error(`Error processing job ${jobId}:`, error)
-        results.push({
+        console.error(`[Cron Runner] Error processing job ${jobId}:`, error)
+        // If an error occurs during job execution, record it as an error
+        const logId = `log_${randomBytes(16).toString('hex')}`
+        const logEntry = {
+          id: logId,
           jobId,
-          status: 'error',
+          status: 'error' as const,
           error: error.message,
-        })
+          executedAt: Date.now(),
+        }
+        await kv.set(`cron:log:${logId}`, logEntry)
+        await kv.lpush(`cron:job:${jobId}:logs`, logId)
+        await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
       }
     }
 
     return res.status(200).json({
-      message: `Processed ${jobIds.length} job(s)`,
-      executed: results.filter(r => r.status !== 'skipped'),
-      timestamp: Date.now(),
+      message: 'Cron jobs processed',
+      executed: results,
     })
   } catch (error: any) {
-    console.error('Error in cron handler:', error)
-    return res.status(500).json({
-      error: 'Failed to process cron jobs',
-      message: error.message,
-    })
+    console.error('[Cron Runner] Error in main handler:', error)
+    return res.status(500).json({ error: error.message || 'Internal Server Error' })
   }
 }
-
