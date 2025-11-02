@@ -29,6 +29,7 @@ export interface CronJobConfig {
   lastRunTime: number | null
   enabled: boolean
   consecutiveFailures: number // Track consecutive failures for auto-pause
+  priority?: number // Execution priority (higher = runs first, default: 0)
 }
 
 export default async function handler(
@@ -40,7 +41,7 @@ export default async function handler(
   }
 
   try {
-    const { name, schedule, type, toAddress, amount, chain, walletId, fromToken, toToken, swapAmount, tokenAddress, fundingAmount, useMax, swapDirection } = req.body
+    const { name, schedule, type, toAddress, amount, chain, walletId, fromToken, toToken, swapAmount, tokenAddress, fundingAmount, useMax, swapDirection, priority } = req.body
 
     // Validate type
     const validTypes = ['eth_transfer', 'swap', 'token_swap'] as const
@@ -179,6 +180,7 @@ export default async function handler(
         enabled: true,
         consecutiveFailures: 0,
         useMax: useMax === true,
+        priority: priority !== undefined ? Number(priority) : 0,
       }
     
       // Add type-specific fields

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { useToast } from './ToastProvider'
+import { BASE_TOKEN_ADDRESSES } from '@/lib/token-constants'
 
 interface CronJob {
   id: string
@@ -22,6 +23,7 @@ interface CronJob {
   chain?: string
   swapDirection?: 'eth_to_token' | 'token_to_eth'
   useMax?: boolean
+  priority?: number
 }
 
 type WalletType = 'master' | 'worker'
@@ -80,9 +82,10 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
     fromToken: 'ETH' as 'ETH' | 'USDC',
     toToken: 'USDC' as 'ETH' | 'USDC',
     swapAmount: '0.0000001',
-    tokenAddress: '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
+    tokenAddress: BASE_TOKEN_ADDRESSES.TEST,
     swapDirection: 'eth_to_token' as 'eth_to_token' | 'token_to_eth',
     fundingAmount: '',
+    priority: 0,
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -102,15 +105,16 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
         type: (job.type || 'token_swap') as 'eth_transfer' | 'swap' | 'token_swap',
         toAddress: job.toAddress || '',
         amount: job.amount || '0.0000001',
-        useMax: (job as any).useMax || false,
+        useMax: job.useMax || false,
         chain: job.chain || 'base',
         walletId: job.walletId || '',
         fromToken: (job.fromToken || 'ETH') as 'ETH' | 'USDC',
         toToken: (job.toToken || 'USDC') as 'ETH' | 'USDC',
         swapAmount: job.swapAmount || '0.0000001',
-        tokenAddress: job.tokenAddress || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
-        swapDirection: (job as any).swapDirection || 'eth_to_token',
+        tokenAddress: (job.tokenAddress || BASE_TOKEN_ADDRESSES.TEST) as `0x${string}`,
+        swapDirection: job.swapDirection || 'eth_to_token',
         fundingAmount: '', // Don't show funding amount in edit mode
+        priority: job.priority ?? 0,
       })
       }
     } else if (!isEditMode && defaultWallet) {
@@ -128,9 +132,10 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
         fromToken: 'ETH',
         toToken: 'USDC',
         swapAmount: '0.0000001',
-        tokenAddress: '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
+        tokenAddress: BASE_TOKEN_ADDRESSES.TEST,
         swapDirection: 'eth_to_token',
         fundingAmount: '',
+        priority: 0,
       })
     }
   }, [isOpen, isEditMode, jobId, jobs, defaultWallet?.id, defaultWalletId])
@@ -182,9 +187,10 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
           fromToken: 'ETH',
           toToken: 'USDC',
           swapAmount: '0.0000001',
-          tokenAddress: '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
+          tokenAddress: BASE_TOKEN_ADDRESSES.TEST,
           swapDirection: 'eth_to_token',
           fundingAmount: '',
+          priority: 0,
         })
       }
       
@@ -257,7 +263,7 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
                 : {}),
               ...(newType === 'token_swap'
                 ? {
-                    tokenAddress: prev.tokenAddress || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07',
+                    tokenAddress: (prev.tokenAddress || BASE_TOKEN_ADDRESSES.TEST) as `0x${string}`,
                   }
                 : {}),
             }))
@@ -287,6 +293,24 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
         <p className="text-xs text-gray-500">
           Examples: <code className="bg-gray-100 px-1 rounded">* * * * *</code> (every minute),{' '}
           <code className="bg-gray-100 px-1 rounded">*/10 * * * *</code> (every 10 minutes)
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <label htmlFor="priority" className="text-sm font-medium">
+          Priority <span className="text-gray-500">(higher = runs first)</span>
+        </label>
+        <input
+          id="priority"
+          type="number"
+          value={formData.priority}
+          onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 0 })}
+          className="px-3 py-2 border border-gray-300 rounded-md"
+          placeholder="0"
+          min="0"
+        />
+        <p className="text-xs text-gray-500">
+          Jobs with higher priority execute first. Default: 0. For jobs with the same schedule (e.g., every minute), use priority to control execution order.
         </p>
       </div>
 
@@ -462,12 +486,12 @@ export default function CronJobForm({ onJobCreated, isOpen, onClose, defaultWall
               id="tokenAddress"
               type="text"
               value={formData.tokenAddress}
-              onChange={(e) => setFormData({ ...formData, tokenAddress: e.target.value })}
+              onChange={(e) => setFormData({ ...formData, tokenAddress: e.target.value as `0x${string}` })}
               className="px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
               placeholder="0x0000000000000000000000000000000000000000"
               required={formData.type === 'token_swap'}
             />
-            <p className="text-xs text-gray-500">Defaults to 0x4961015f34b0432e86e6d9841858c4ff87d4bb07</p>
+            <p className="text-xs text-gray-500">Defaults to {BASE_TOKEN_ADDRESSES.TEST.slice(0, 6)}...{BASE_TOKEN_ADDRESSES.TEST.slice(-4)}</p>
           </div>
 
           <div className="flex flex-col gap-2">

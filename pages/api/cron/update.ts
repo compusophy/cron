@@ -11,7 +11,7 @@ export default async function handler(
   }
 
   try {
-    const { jobId, name, schedule, type, toAddress, amount, chain, walletId, fromToken, toToken, swapAmount, tokenAddress, useMax, swapDirection } = req.body
+    const { jobId, name, schedule, type, toAddress, amount, chain, walletId, fromToken, toToken, swapAmount, tokenAddress, useMax, swapDirection, priority } = req.body
 
     if (!jobId) {
       return res.status(400).json({ error: 'Missing jobId' })
@@ -43,6 +43,7 @@ export default async function handler(
       chain: chain !== undefined ? chain : existingJob.chain,
       walletId: walletId !== undefined ? walletId : existingJob.walletId,
       useMax: useMax !== undefined ? useMax : existingJob.useMax,
+      priority: priority !== undefined ? Number(priority) : (existingJob.priority ?? 0),
     }
 
     // Update type-specific fields

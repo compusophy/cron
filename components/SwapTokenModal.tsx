@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import useSWR from 'swr'
 import { useToast } from './ToastProvider'
+import { BASE_TOKEN_ADDRESSES } from '@/lib/token-constants'
 
 interface SwapTokenModalProps {
   isOpen: boolean
@@ -35,6 +36,7 @@ interface Balances {
   weth: string
   usdc: string
   testCoin: string
+  wrplt: string
   tokens?: TokenBalance[]
 }
 
@@ -75,15 +77,21 @@ export default function SwapTokenModal({ isOpen, onClose, wallet, defaultTokenAd
       }
       // Check standard tokens
       const lowerToken = formData.tokenAddress.toLowerCase()
-      if (lowerToken === '0x4200000000000000000000000000000000000006') {
+      const wethAddr = BASE_TOKEN_ADDRESSES.WETH.toLowerCase()
+      if (lowerToken === wethAddr) {
         return balances?.weth || '0'
       }
-      if (lowerToken === '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913') {
+      const usdcAddr = BASE_TOKEN_ADDRESSES.USDC.toLowerCase()
+      if (lowerToken === usdcAddr) {
         return balances?.usdc || '0'
       }
-      const testCoinAddr = (process.env.NEXT_PUBLIC_DEFAULT_TOKEN_ADDRESS || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07').toLowerCase()
+      const testCoinAddr = BASE_TOKEN_ADDRESSES.TEST.toLowerCase()
       if (lowerToken === testCoinAddr) {
         return balances?.testCoin || '0'
+      }
+      const wrpltAddr = BASE_TOKEN_ADDRESSES.WRPLT.toLowerCase()
+      if (lowerToken === wrpltAddr) {
+        return balances?.wrplt || '0'
       }
       return '0'
     }
@@ -98,7 +106,7 @@ export default function SwapTokenModal({ isOpen, onClose, wallet, defaultTokenAd
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.useMax, formData.swapDirection, formData.tokenAddress, balances?.eth, balances?.weth, balances?.usdc, balances?.testCoin, balances?.tokens])
+  }, [formData.useMax, formData.swapDirection, formData.tokenAddress, balances?.eth, balances?.weth, balances?.usdc, balances?.testCoin, balances?.wrplt, balances?.tokens])
 
   const handleMaxToggle = () => {
     const newUseMax = !formData.useMax

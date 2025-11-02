@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Copy, Check, ExternalLink, Pause, Play, Edit, Trash2 } from 'lucide-react'
+import { Copy, Check, ExternalLink } from 'lucide-react'
 import useSWR from 'swr'
+import BalancesCard from './BalancesCard'
 
 type WalletType = 'master' | 'worker'
 
@@ -27,6 +28,7 @@ interface Balances {
   weth: string
   usdc: string
   testCoin: string
+  wrplt: string
   tokens?: TokenBalance[]
 }
 
@@ -68,21 +70,15 @@ export default function WalletCard({ wallet, copiedAddress, onCopyAddress, onSho
 
   const balances = balanceData?.balances
 
-  // Determine task labels based on cron jobs
-  const getTaskLabels = () => {
-    if (cronJobs.length === 0) return ['task: idle']
-    return cronJobs.map(job => {
-      const typeLabels: Record<string, string> = {
-        'eth_transfer': 'task: send',
-        'swap': 'task: swap',
-        'token_swap': 'task: swap',
-      }
-      return typeLabels[job.type] || 'task: idle'
-    })
+  // Get task label for a job
+  const getTaskLabel = (jobType: string) => {
+    const typeLabels: Record<string, string> = {
+      'eth_transfer': 'task: send',
+      'swap': 'task: swap',
+      'token_swap': 'task: swap',
+    }
+    return typeLabels[jobType] || 'task: idle'
   }
-  
-  const hasActiveJobs = cronJobs.some(job => job.enabled)
-  const hasPausedJobs = cronJobs.some(job => !job.enabled)
 
   return (
     <div className="p-4 border border-gray-200 rounded-lg hover:shadow-sm transition-shadow relative">
@@ -90,23 +86,6 @@ export default function WalletCard({ wallet, copiedAddress, onCopyAddress, onSho
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
             <h4 className="text-base font-semibold">{wallet.name}</h4>
-            {hasActiveJobs && (
-              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
-                Active
-              </span>
-            )}
-            {hasPausedJobs && !hasActiveJobs && (
-              <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs font-medium">
-                Paused
-              </span>
-            )}
-          </div>
-          <div className="mb-2">
-            {getTaskLabels().map((label, idx) => (
-              <p key={idx} className="text-xs text-gray-600 font-medium">
-                {label}
-              </p>
-            ))}
           </div>
           <div className="flex items-center gap-2 mb-2">
             <p className="text-sm text-gray-500 font-mono break-all">{wallet.address}</p>
@@ -134,44 +113,33 @@ export default function WalletCard({ wallet, copiedAddress, onCopyAddress, onSho
             </a>
           </div>
 
-          {/* Job actions */}
+          {/* Cron Jobs */}
           {cronJobs.length > 0 && (
-            <div className="mt-2 mb-2 border-t border-gray-200 pt-2">
-              <div className="flex flex-wrap gap-2">
+            <div className="mt-4 border-t border-gray-200 pt-3">
+              <div className="flex flex-col gap-2">
                 {cronJobs.map((job) => (
-                  <div key={job.id} className="flex items-center gap-1 border border-gray-300 rounded px-2 py-1 bg-gray-50">
-                    <span className="text-xs text-gray-600">{job.name || `Job ${job.id.slice(-6)}`}</span>
-                    {onPauseCronJob && (
-                      <button
-                        onClick={() => onPauseCronJob(job.id)}
-                        className="p-1 rounded hover:bg-gray-200 text-gray-700"
-                        title={job.enabled ? 'Pause' : 'Resume'}
-                      >
+                  <div key={job.id} className="flex items-center justify-between border border-gray-300 rounded px-3 py-2 bg-gray-50">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-900">{job.name || `Job ${job.id.slice(-6)}`}</span>
+                        <span className="text-xs text-gray-600">{getTaskLabel(job.type)}</span>
                         {job.enabled ? (
-                          <Pause className="h-3 w-3" />
+                          <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">
+                            Active
+                          </span>
                         ) : (
-                          <Play className="h-3 w-3" />
+                          <span className="px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs font-medium">
+                            Paused
+                          </span>
                         )}
-                      </button>
-                    )}
-                    {onEditCronJob && (
-                      <button
-                        onClick={() => onEditCronJob(job.id)}
-                        className="p-1 rounded hover:bg-gray-200 text-gray-700"
-                        title="Edit"
-                      >
-                        <Edit className="h-3 w-3" />
-                      </button>
-                    )}
-                    {onDeleteCronJob && (
-                      <button
-                        onClick={() => onDeleteCronJob(job.id)}
-                        className="p-1 rounded hover:bg-red-100 text-red-700"
-                        title="Delete"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    )}
+                      </div>
+                    </div>
+                    <CronJobMenu
+                      job={job}
+                      onPauseCronJob={onPauseCronJob}
+                      onEditCronJob={onEditCronJob}
+                      onDeleteCronJob={onDeleteCronJob}
+                    />
                   </div>
                 ))}
               </div>
@@ -212,41 +180,7 @@ export default function WalletCard({ wallet, copiedAddress, onCopyAddress, onSho
           )}
 
           {/* Balance display */}
-          <dl className="mt-3 space-y-1 text-xs">
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-500">ETH</dt>
-              <dd className="font-mono font-semibold tabular-nums">
-                {balances ? parseFloat(balances.eth).toFixed(6) : '...'}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-500">WETH</dt>
-              <dd className="font-mono font-semibold tabular-nums">
-                {balances ? parseFloat(balances.weth).toFixed(6) : '...'}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-500">USDC</dt>
-              <dd className="font-mono font-semibold tabular-nums">
-                {balances ? parseFloat(balances.usdc).toFixed(6) : '...'}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between">
-              <dt className="text-gray-500">TestCoin</dt>
-              <dd className="font-mono font-semibold tabular-nums">
-                {balances ? parseFloat(balances.testCoin).toFixed(6) : '...'}
-              </dd>
-            </div>
-            {/* Dynamic tokens */}
-            {balances?.tokens && balances.tokens.length > 0 && balances.tokens.map((token) => (
-              <div key={token.address} className="flex items-center justify-between">
-                <dt className="text-gray-500" title={token.name}>{token.symbol}</dt>
-                <dd className="font-mono font-semibold tabular-nums">
-                  {parseFloat(token.balance).toFixed(6)}
-                </dd>
-              </div>
-            ))}
-          </dl>
+          <BalancesCard balances={balances} />
         </div>
 
         {/* 3-dot menu */}
@@ -265,6 +199,74 @@ export default function WalletCard({ wallet, copiedAddress, onCopyAddress, onSho
   )
 }
 
+interface CronJobMenuProps {
+  job: CronJob
+  onPauseCronJob?: (jobId: string) => void
+  onEditCronJob?: (jobId: string) => void
+  onDeleteCronJob?: (jobId: string) => void
+}
+
+function CronJobMenu({ job, onPauseCronJob, onEditCronJob, onDeleteCronJob }: CronJobMenuProps) {
+  const [openMenu, setOpenMenu] = useState<string | null>(null)
+
+  return (
+    <div className="relative ml-3 flex-shrink-0">
+      <button
+        onClick={() => setOpenMenu(openMenu === job.id ? null : job.id)}
+        className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-100"
+        title="Menu"
+      >
+        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+        </svg>
+      </button>
+
+      {openMenu === job.id && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpenMenu(null)} />
+          <div className="absolute right-0 top-8 z-20 w-48 bg-white border border-gray-200 rounded-md shadow-lg">
+            <div className="py-1">
+              {onPauseCronJob && (
+                <button
+                  onClick={() => {
+                    onPauseCronJob(job.id)
+                    setOpenMenu(null)
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                >
+                  {job.enabled ? 'Pause Job' : 'Resume Job'}
+                </button>
+              )}
+              {onEditCronJob && (
+                <button
+                  onClick={() => {
+                    onEditCronJob(job.id)
+                    setOpenMenu(null)
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                >
+                  Edit Job
+                </button>
+              )}
+              {onDeleteCronJob && (
+                <button
+                  onClick={() => {
+                    onDeleteCronJob(job.id)
+                    setOpenMenu(null)
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-50"
+                >
+                  Delete Job
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 interface WalletMenuProps {
   wallet: Wallet
   onShowPrivateKey: (walletId: string) => void
@@ -274,12 +276,10 @@ interface WalletMenuProps {
   onAddChild?: (wallet: Wallet) => void
   onAssignParent?: (wallet: Wallet) => void
   onCreateCronJob?: () => void
-  onPauseCronJob?: (jobId: string) => void
-  onEditCronJob?: (jobId: string) => void
   cronJobs?: CronJob[]
 }
 
-function WalletMenu({ wallet, onShowPrivateKey, onDelete, onDrain, onViewLogs, onAddChild, onAssignParent, onCreateCronJob, onPauseCronJob, onEditCronJob, cronJobs = [] }: WalletMenuProps) {
+function WalletMenu({ wallet, onShowPrivateKey, onDelete, onDrain, onViewLogs, onAddChild, onAssignParent, onCreateCronJob, cronJobs = [] }: WalletMenuProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
 
   return (
@@ -354,15 +354,15 @@ function WalletMenu({ wallet, onShowPrivateKey, onDelete, onDrain, onViewLogs, o
                     Drain Assets
                   </button>
                 )}
-                <button
-                  onClick={() => {
-                    onDelete(wallet.id, wallet.name)
-                    setOpenMenu(null)
-                  }}
-                  className="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-50"
-                >
-                  Delete Wallet
-                </button>
+                          <button
+                            onClick={() => {
+                              onDelete(wallet.id, wallet.name)
+                              setOpenMenu(null)
+                            }}
+                            className="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-50"
+                          >
+                            Delete Wallet
+                          </button>
             </div>
           </div>
         </>

@@ -3,12 +3,7 @@ import { createPublicClient, http, formatEther, formatUnits } from 'viem'
 import { base } from 'viem/chains'
 import { kv } from '@vercel/kv'
 import { getTokenMetadata } from '@/lib/token-metadata'
-
-const BASE_TOKENS = {
-  WETH: '0x4200000000000000000000000000000000000006' as `0x${string}`,
-  USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`,
-  TEST: (process.env.DEFAULT_TOKEN_ADDRESS || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07') as `0x${string}`,
-}
+import { STANDARD_TOKENS, BASE_TOKEN_ADDRESSES, isStandardToken } from '@/lib/token-constants'
 
 const ERC20_BALANCE_ABI = [
   {
@@ -50,11 +45,11 @@ export default async function handler(
     })
 
     // Standard tokens (always fetch)
-    const standardTokens = [
-      { address: BASE_TOKENS.WETH, decimals: 18, symbol: 'WETH' },
-      { address: BASE_TOKENS.USDC, decimals: 6, symbol: 'USDC' },
-      { address: BASE_TOKENS.TEST, decimals: 18, symbol: 'TestCoin' },
-    ]
+    const standardTokens = STANDARD_TOKENS.map(token => ({
+      address: token.address,
+      decimals: token.decimals,
+      symbol: token.symbol,
+    }))
 
     const standardBalances: Record<string, string> = {}
     
@@ -97,12 +92,7 @@ export default async function handler(
           const dynamicPromises = trackedTokens.map(async (tokenAddress) => {
             try {
               // Skip if it's a standard token we already fetched
-              const lowerTokenAddress = tokenAddress.toLowerCase()
-              if (
-                lowerTokenAddress === BASE_TOKENS.WETH.toLowerCase() ||
-                lowerTokenAddress === BASE_TOKENS.USDC.toLowerCase() ||
-                lowerTokenAddress === BASE_TOKENS.TEST.toLowerCase()
-              ) {
+              if (isStandardToken(tokenAddress)) {
                 return null
               }
 
@@ -153,6 +143,7 @@ export default async function handler(
       weth: standardBalances.weth || '0',
       usdc: standardBalances.usdc || '0',
       testCoin: standardBalances.testcoin || standardBalances.test || '0',
+      wrplt: standardBalances.wrplt || '0',
       // Dynamic tokens
       tokens: dynamicBalances,
     }

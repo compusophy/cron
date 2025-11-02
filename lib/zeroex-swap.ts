@@ -189,7 +189,27 @@ export async function swapTokenForEthZeroEx(
   const publicClient = createPublicClient({ chain, transport })
 
   const tokenAddressLower = tokenAddress.toLowerCase() as Address
-  const amountUnits = parseUnits(amount, tokenDecimals)
+  
+  // Parse amount to smallest unit, ensuring it's a valid positive number
+  let amountUnits: bigint
+  try {
+    // Ensure amount is a valid string representation of a number
+    const amountNum = parseFloat(amount)
+    if (isNaN(amountNum) || amountNum <= 0) {
+      throw new Error(`Invalid amount: ${amount}. Must be a positive number.`)
+    }
+    amountUnits = parseUnits(amount, tokenDecimals)
+    
+    // Ensure the parsed amount is a positive integer
+    if (amountUnits <= 0n) {
+      throw new Error(`Invalid amount: ${amount}. Parsed to ${amountUnits.toString()}, must be positive.`)
+    }
+  } catch (error: any) {
+    if (error.message?.includes('Invalid amount')) {
+      throw error
+    }
+    throw new Error(`Failed to parse amount "${amount}" with ${tokenDecimals} decimals: ${error.message}`)
+  }
 
   // Check token balance
   const tokenBalance = await publicClient.readContract({
@@ -201,6 +221,11 @@ export async function swapTokenForEthZeroEx(
 
   if (tokenBalance < amountUnits) {
     throw new Error(`Insufficient token balance. Have ${formatUnits(tokenBalance, tokenDecimals)}, need ${amount}`)
+  }
+  
+  // Double-check that amountUnits is a valid positive integer for the API
+  if (amountUnits.toString().includes('.') || amountUnits <= 0n) {
+    throw new Error(`Invalid sellAmount for 0x API: ${amountUnits.toString()}. Must be a positive integer.`)
   }
 
   return await withNonceLock(account.address, async () => {

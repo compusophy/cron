@@ -10,7 +10,7 @@ export default function Home() {
         <title>Cron Jobs</title>
       </Head>
       
-      <WalletList />
+          <WalletList />
       </>
     </ToastProvider>
   )

@@ -42,19 +42,24 @@ export default async function handler(
           walletId: jobConfig.walletId,
           walletName: jobWallet?.name,
           walletAddress: jobWallet?.address,
+          priority: jobConfig.priority ?? 0,
         }
         
         // Add type-specific fields
         if (jobConfig.type === 'eth_transfer') {
           job.toAddress = jobConfig.toAddress
           job.amount = jobConfig.amount
+          job.useMax = jobConfig.useMax
         } else if (jobConfig.type === 'swap') {
           job.fromToken = jobConfig.fromToken
           job.toToken = jobConfig.toToken
           job.swapAmount = jobConfig.swapAmount
+          job.useMax = jobConfig.useMax
         } else if (jobConfig.type === 'token_swap') {
           job.swapAmount = jobConfig.swapAmount
           job.tokenAddress = jobConfig.tokenAddress
+          job.swapDirection = jobConfig.swapDirection
+          job.useMax = jobConfig.useMax
         }
         
         return job

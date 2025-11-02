@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { useToast } from './ToastProvider'
+import { STANDARD_TOKENS, BASE_TOKEN_ADDRESSES } from '@/lib/token-constants'
 
 type AssetOption = {
   label: string
-  value: 'ETH' | 'WETH' | 'USDC' | 'TEST' | 'CUSTOM'
+  value: 'ETH' | 'WETH' | 'USDC' | 'TEST' | 'WRPLT' | 'CUSTOM'
   tokenAddress?: `0x${string}`
   decimals: number
   symbol?: string
@@ -42,6 +43,7 @@ interface Balances {
   weth: string
   usdc: string
   testCoin: string
+  wrplt: string
   tokens?: TokenBalance[]
 }
 
@@ -70,14 +72,12 @@ export default function SendAssetModal({ isOpen, onClose, wallet, onSuccess }: S
   const getAssetOptions = (): AssetOption[] => {
     const standardAssets: AssetOption[] = [
       { label: 'ETH (native)', value: 'ETH', decimals: 18 },
-      { label: 'WETH', value: 'WETH', tokenAddress: '0x4200000000000000000000000000000000000006', decimals: 18 },
-      { label: 'USDC', value: 'USDC', tokenAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
-      {
-        label: 'TestCoin',
-        value: 'TEST',
-        tokenAddress: (process.env.NEXT_PUBLIC_DEFAULT_TOKEN_ADDRESS || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07') as `0x${string}`,
-        decimals: 18,
-      },
+      ...STANDARD_TOKENS.map(token => ({
+        label: token.symbol,
+        value: token.symbol as 'WETH' | 'USDC' | 'TEST' | 'WRPLT',
+        tokenAddress: token.address,
+        decimals: token.decimals,
+      })),
     ]
 
     // Add tracked tokens (only those with balance > 0)
@@ -121,6 +121,8 @@ export default function SendAssetModal({ isOpen, onClose, wallet, onSuccess }: S
       return balances?.usdc || '0'
     } else if (formData.asset.value === 'TEST') {
       return balances?.testCoin || '0'
+    } else if (formData.asset.value === 'WRPLT') {
+      return balances?.wrplt || '0'
     } else if (formData.asset.value === 'CUSTOM' && formData.asset.tokenAddress) {
       // For custom tokens, find in tokens array
       const token = balances?.tokens?.find(t => t.address.toLowerCase() === formData.asset.tokenAddress?.toLowerCase())
@@ -138,7 +140,7 @@ export default function SendAssetModal({ isOpen, onClose, wallet, onSuccess }: S
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.useMax, formData.asset.value, formData.asset.tokenAddress, balances?.eth, balances?.weth, balances?.usdc, balances?.testCoin, balances?.tokens])
+  }, [formData.useMax, formData.asset.value, formData.asset.tokenAddress, balances?.eth, balances?.weth, balances?.usdc, balances?.testCoin, balances?.wrplt, balances?.tokens])
 
   // Reset to ETH if selected asset is no longer available
   useEffect(() => {

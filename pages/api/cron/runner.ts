@@ -71,7 +71,16 @@ async function getMaxTokenBalance(
     args: [account.address],
   }) as bigint
   
-  return formatUnits(balance, decimals)
+  // Return formatted balance - ensure we return the full balance as a properly formatted decimal string
+  // This will be parsed back by parseUnits in the swap function
+  const formatted = formatUnits(balance, decimals)
+  
+  // Validate that we have a balance
+  if (balance === 0n) {
+    return '0'
+  }
+  
+  return formatted
 }
 
 function resolveLogWalletId(jobConfig: CronJobConfig) {
@@ -143,27 +152,67 @@ export default async function handler(
       error?: string
     }> = []
 
-    // Process each job
+    // Group jobs by walletId to ensure sequential execution per wallet
+    const jobsByWallet = new Map<string, string[]>()
+    const jobConfigs = new Map<string, CronJobConfig>()
+    
+    // First, load all job configs and group by wallet
     for (const jobId of jobIds) {
-      try {
-        const jobConfig = await kv.get<CronJobConfig>(`cron:job:${jobId}`)
-        
-        if (!jobConfig || !jobConfig.enabled) {
-          continue
-        }
+      const jobConfig = await kv.get<CronJobConfig>(`cron:job:${jobId}`)
+      if (!jobConfig || !jobConfig.enabled) {
+        continue
+      }
+      
+      // Check if job should run based on schedule
+      const shouldRun = shouldRunJob(jobConfig.schedule, jobConfig.lastRunTime)
+      if (!shouldRun) {
+        continue
+      }
+      
+      jobConfigs.set(jobId, jobConfig)
+      
+      const walletId = jobConfig.walletId || 'unknown'
+      if (!jobsByWallet.has(walletId)) {
+        jobsByWallet.set(walletId, [])
+      }
+      jobsByWallet.get(walletId)!.push(jobId)
+    }
 
-        // Check if job should run based on schedule
-        const shouldRun = shouldRunJob(jobConfig.schedule, jobConfig.lastRunTime)
+    // Process jobs sequentially per wallet (but can process different wallets in parallel if needed)
+    // For now, we'll process wallets sequentially to be safe, but jobs within a wallet are queued
+    for (const [walletId, walletJobIds] of jobsByWallet.entries()) {
+      console.log(`[Cron Runner] Processing ${walletJobIds.length} job(s) for wallet ${walletId}`)
+      
+      // Sort jobs by priority (higher priority first), then by creation time (older first) for deterministic ordering
+      const sortedJobIds = walletJobIds.sort((a, b) => {
+        const jobA = jobConfigs.get(a)!
+        const jobB = jobConfigs.get(b)!
         
-        if (!shouldRun) {
-          console.log(`[Cron Runner] Job ${jobId} skipped - schedule doesn't match or already ran recently`)
-          continue
+        // First sort by priority (higher = first)
+        const priorityA = jobA.priority ?? 0
+        const priorityB = jobB.priority ?? 0
+        if (priorityA !== priorityB) {
+          return priorityB - priorityA // Higher priority first
         }
         
-        console.log(`[Cron Runner] Job ${jobId} should run! Schedule: ${jobConfig.schedule}, Last run: ${jobConfig.lastRunTime}`)
+        // If same priority, sort by creation time (older = first) for deterministic ordering
+        return jobA.createdAt - jobB.createdAt
+      })
+      
+      console.log(`[Cron Runner] Sorted jobs for wallet ${walletId} by priority:`, sortedJobIds.map(id => {
+        const job = jobConfigs.get(id)!
+        return `${job.name} (priority: ${job.priority ?? 0})`
+      }))
+      
+      // Execute jobs for this wallet sequentially in priority order
+      for (const jobId of sortedJobIds) {
+        const jobConfig = jobConfigs.get(jobId)!
+        
+        try {
+          console.log(`[Cron Runner] Executing job ${jobId} for wallet ${walletId}`)
 
-        // Execute the job based on type
-        let result: any = { jobId, status: 'skipped' }
+          // Execute the job based on type
+          let result: any = { jobId, status: 'skipped' }
 
         if (jobConfig.type === 'eth_transfer') {
           try {
@@ -424,9 +473,21 @@ export default async function handler(
               if (swapDirection === 'eth_to_token') {
                 amountToSwap = await getMaxEthBalance(jobConfig.privateKey, chainName, rpcUrl)
                 console.log(`[Cron Runner] Using Max: calculated max ETH balance = ${amountToSwap}`)
+                
+                // Check if we have enough balance
+                if (parseFloat(amountToSwap) <= 0) {
+                  throw new Error('Insufficient ETH balance for swap')
+                }
               } else {
-                amountToSwap = await getMaxTokenBalance(jobConfig.privateKey, jobConfig.tokenAddress, chainName, rpcUrl)
+                // For token_to_eth, get the raw balance and format it properly
+                const rawBalance = await getMaxTokenBalance(jobConfig.privateKey, jobConfig.tokenAddress, chainName, rpcUrl)
+                amountToSwap = rawBalance
                 console.log(`[Cron Runner] Using Max: calculated max token balance = ${amountToSwap}`)
+                
+                // Check if we have enough balance
+                if (parseFloat(amountToSwap) <= 0) {
+                  throw new Error('Insufficient token balance for swap')
+                }
               }
             }
 
@@ -549,20 +610,28 @@ export default async function handler(
             await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
           }
         }
-      } catch (error: any) {
-        console.error(`[Cron Runner] Error processing job ${jobId}:`, error)
-        // If an error occurs during job execution, record it as an error
-        const logId = `log_${randomBytes(16).toString('hex')}`
-        const logEntry = {
-          id: logId,
-          jobId,
-          status: 'error' as const,
-          error: error.message,
-          executedAt: Date.now(),
+        } catch (error: any) {
+          console.error(`[Cron Runner] Error processing job ${jobId}:`, error)
+          // If an error occurs during job execution, record it as an error
+          const logId = `log_${randomBytes(16).toString('hex')}`
+          const logEntry = {
+            id: logId,
+            jobId,
+            status: 'error' as const,
+            error: error.message,
+            executedAt: Date.now(),
+          }
+          await kv.set(`cron:log:${logId}`, logEntry)
+          await kv.lpush(`cron:job:${jobId}:logs`, logId)
+          await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
+          
+          results.push({
+            jobId,
+            status: 'error',
+            error: error.message,
+            executedAt: Date.now(),
+          })
         }
-        await kv.set(`cron:log:${logId}`, logEntry)
-        await kv.lpush(`cron:job:${jobId}:logs`, logId)
-        await kv.ltrim(`cron:job:${jobId}:logs`, 0, 99)
       }
     }
 

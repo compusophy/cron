@@ -13,8 +13,9 @@ import WalletForm from './WalletForm'
 import ReparentWalletModal from './ReparentWalletModal'
 import CronJobForm from './CronJobForm'
 import { useToast } from './ToastProvider'
+import { BASE_TOKEN_ADDRESSES } from '@/lib/token-constants'
 
-const DEFAULT_TEST_COIN_ADDRESS = process.env.NEXT_PUBLIC_DEFAULT_TOKEN_ADDRESS || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07'
+const DEFAULT_TEST_COIN_ADDRESS = BASE_TOKEN_ADDRESSES.TEST
 
 type WalletType = 'master' | 'worker'
 
@@ -195,6 +196,11 @@ export default function WalletList() {
     }
     return acc
   }, {})
+  
+  // Sort jobs consistently by id to prevent reordering
+  Object.keys(walletJobsMap).forEach(walletId => {
+    walletJobsMap[walletId].sort((a, b) => a.id.localeCompare(b.id))
+  })
 
   const walletById = wallets.reduce<Record<string, Wallet>>((acc, wallet) => {
     acc[wallet.id] = wallet

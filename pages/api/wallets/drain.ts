@@ -7,6 +7,7 @@ import { base, mainnet, sepolia } from 'viem/chains'
 import { recordWalletLog } from '@/lib/wallet-logs'
 import { withNonceLock } from '@/lib/nonce-lock'
 import { getTokenMetadata } from '@/lib/token-metadata'
+import { STANDARD_TOKENS } from '@/lib/token-constants'
 
 const ERC20_ABI = [
   {
@@ -28,16 +29,7 @@ const ERC20_ABI = [
   },
 ] as const
 
-// Standard tokens that we always check
-const STANDARD_TOKENS = [
-  { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`, decimals: 6, symbol: 'USDC' },
-  { address: '0x4200000000000000000000000000000000000006' as `0x${string}`, decimals: 18, symbol: 'WETH' },
-  {
-    address: (process.env.DEFAULT_TOKEN_ADDRESS || process.env.NEXT_PUBLIC_DEFAULT_TOKEN_ADDRESS || '0x4961015f34b0432e86e6d9841858c4ff87d4bb07') as `0x${string}`,
-    decimals: 18,
-    symbol: 'TestCoin',
-  },
-]
+// Standard tokens are imported from token-constants
 
 function resolveRpcUrl(targetChain: string) {
   if (targetChain === 'base') {
